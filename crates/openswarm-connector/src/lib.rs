@@ -1,4 +1,4 @@
-//! OpenSwarm Connector - JSON-RPC API server and sidecar for AI agents
+//! Open Swarm Connector - JSON-RPC API server and sidecar for AI agents
 //!
 //! The connector is the interface between an AI agent (e.g., OpenClaw) and
 //! the OpenSwarm network. It initializes and orchestrates all subsystems:
@@ -14,6 +14,7 @@ pub mod agent_bridge;
 pub mod config;
 pub mod connector;
 pub mod rpc_server;
+pub mod tui;
 
 pub use config::ConnectorConfig;
 pub use connector::OpenSwarmConnector;

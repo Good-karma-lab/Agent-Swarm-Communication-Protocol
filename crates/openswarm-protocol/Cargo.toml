@@ -1,6 +1,6 @@
 [package]
 name = "openswarm-protocol"
-description = "Core protocol types and message definitions for the OpenSwarm/Aether protocol"
+description = "Core protocol types and message definitions for the Open Swarm Protocol"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

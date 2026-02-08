@@ -28,7 +28,7 @@ pub const TOPIC_PREFIX: &str = "/openswarm/1.0.0";
 pub const JSONRPC_VERSION: &str = "2.0";
 
 /// Protocol version string.
-pub const PROTOCOL_VERSION: &str = "/openswarm/aether/1.0.0";
+pub const PROTOCOL_VERSION: &str = "/openswarm/1.0.0";
 
 /// Proof of Work difficulty (number of leading zero bits required).
 pub const POW_DIFFICULTY: u32 = 16;

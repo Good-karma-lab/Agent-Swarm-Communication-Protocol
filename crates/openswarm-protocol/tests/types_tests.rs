@@ -441,5 +441,5 @@ fn pow_difficulty_is_16() {
 fn protocol_version_format() {
     let v = openswarm_protocol::constants::PROTOCOL_VERSION;
     assert!(v.starts_with("/openswarm/"));
-    assert!(v.contains("aether"));
+    assert!(v.contains("openswarm"));
 }
