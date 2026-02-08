@@ -7,7 +7,7 @@
 //! - Proof verification
 //! - Tamper detection
 
-use openswarm_state::merkle_dag::{MerkleDag, MerkleNode};
+use openswarm_state::merkle_dag::MerkleDag;
 
 // ═══════════════════════════════════════════════════════════════
 // § 7.3 Merkle-DAG Construction

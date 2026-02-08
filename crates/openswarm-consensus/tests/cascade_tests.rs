@@ -6,7 +6,7 @@
 //! - Prime Orchestrator role assignment
 
 use openswarm_consensus::cascade::{CascadeEngine, StopCondition};
-use openswarm_protocol::types::{Plan, PlanSubtask, Task, TaskStatus};
+use openswarm_protocol::types::{Plan, PlanSubtask};
 use openswarm_protocol::identity::AgentId;
 
 // ═══════════════════════════════════════════════════════════════
@@ -33,7 +33,7 @@ fn cascade_assigns_subtasks_to_agents() {
 
     let assignments = CascadeEngine::assign_subtasks(&plan, &agents);
     assert_eq!(assignments.len(), 3, "Must produce one assignment per subtask");
-    for (i, (agent, task)) in assignments.iter().enumerate() {
+    for (_i, (_agent, task)) in assignments.iter().enumerate() {
         assert_eq!(task.tier_level, 2, "Subtasks should be tier_level + 1");
         assert_eq!(task.parent_task_id.as_deref(), Some("task-1"));
     }

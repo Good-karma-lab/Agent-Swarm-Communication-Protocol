@@ -231,7 +231,6 @@ impl PyramidAllocator {
         if depth == 1 {
             return TierDistribution { tiers: vec![n] };
         }
-        let k_u32 = k as u32;
         let mut tiers: Vec<u64> = Vec::with_capacity(depth as usize);
         let mut remaining = n;
 
