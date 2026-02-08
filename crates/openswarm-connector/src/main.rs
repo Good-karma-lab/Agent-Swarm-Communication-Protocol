@@ -1,4 +1,4 @@
-//! CLI binary entry point for the OpenSwarm Connector sidecar.
+//! CLI binary entry point for the Open Swarm Connector sidecar.
 //!
 //! Usage:
 //!   openswarm-connector [OPTIONS]
@@ -19,10 +19,10 @@ use openswarm_connector::config::ConnectorConfig;
 use openswarm_connector::connector::OpenSwarmConnector;
 use openswarm_connector::rpc_server::RpcServer;
 
-/// OpenSwarm Connector - Sidecar process connecting AI agents to the swarm.
+/// Open Swarm Connector - Sidecar process connecting AI agents to the swarm.
 #[derive(Parser, Debug)]
 #[command(name = "openswarm-connector")]
-#[command(about = "OpenSwarm Connector sidecar for AI agent swarm participation")]
+#[command(about = "Open Swarm Connector sidecar for AI agent swarm participation")]
 #[command(version)]
 struct Cli {
     /// Path to configuration TOML file.
@@ -48,6 +48,10 @@ struct Cli {
     /// Set the agent name.
     #[arg(long, value_name = "NAME")]
     agent_name: Option<String>,
+
+    /// Launch the terminal UI dashboard for live monitoring.
+    #[arg(long)]
+    tui: bool,
 }
 
 #[tokio::main]
@@ -92,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
         agent = %config.agent.name,
         listen = %config.network.listen_addr,
         rpc = %config.rpc.bind_addr,
-        "Starting OpenSwarm Connector"
+        "Starting Open Swarm Connector"
     );
 
     // Create the connector.
@@ -105,7 +109,7 @@ async fn main() -> anyhow::Result<()> {
     // Start the RPC server in a background task.
     let rpc_server = RpcServer::new(
         config.rpc.bind_addr.clone(),
-        state,
+        state.clone(),
         network_handle,
         config.rpc.max_connections,
     );
@@ -116,8 +120,29 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // Run the connector (this blocks until shutdown).
-    connector.run().await?;
+    if cli.tui {
+        // Spawn the TUI in a separate task (only needs Arc<RwLock<ConnectorState>>).
+        let tui_state = state.clone();
+        let tui_handle = tokio::spawn(async move {
+            if let Err(e) = openswarm_connector::tui::run_tui(tui_state).await {
+                tracing::error!(error = %e, "TUI error");
+            }
+        });
+
+        // Run the connector on the main thread, but race it against the TUI.
+        // When the TUI exits (user pressed 'q'), we stop the connector too.
+        tokio::select! {
+            result = connector.run() => {
+                result?;
+            }
+            _ = tui_handle => {
+                // TUI exited (user pressed 'q'), shutting down.
+            }
+        }
+    } else {
+        // Run the connector (this blocks until shutdown).
+        connector.run().await?;
+    }
 
     Ok(())
 }

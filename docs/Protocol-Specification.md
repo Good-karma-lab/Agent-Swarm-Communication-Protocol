@@ -90,7 +90,7 @@ The protocol uses semantic versioning: `MAJOR.MINOR.PATCH`.
 - **MINOR**: Backwards-compatible feature additions.
 - **PATCH**: Clarifications and editorial changes.
 
-The protocol version string is: `/openswarm/aether/1.0.0`
+The protocol version string is: `/openswarm/1.0.0`
 
 ### 1.5 Relationship to Other Protocols
 
@@ -355,7 +355,7 @@ When a Swarm Connector starts:
       "hash": "0000a3f2...",
       "difficulty": 16
     },
-    "protocol_version": "/openswarm/aether/1.0.0"
+    "protocol_version": "/openswarm/1.0.0"
   },
   "signature": "3045..."
 }

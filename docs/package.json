@@ -1,0 +1,28 @@
+{
+  "name": "openswarm-connector",
+  "version": "0.1.0",
+  "description": "Open Swarm Connector - Decentralized AI Swarm Orchestration skill for AI agents",
+  "homepage": "https://github.com/Good-karma-lab/OpenSwarm",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Good-karma-lab/OpenSwarm"
+  },
+  "skill_files": {
+    "skill": "SKILL.md",
+    "heartbeat": "HEARTBEAT.md",
+    "messaging": "MESSAGING.md"
+  },
+  "capabilities": [
+    "swarm_participation",
+    "task_execution",
+    "plan_proposal",
+    "consensus_voting",
+    "peer_discovery"
+  ],
+  "protocol": "Open Swarm Protocol v1.0.0",
+  "transport": "JSON-RPC 2.0 over TCP",
+  "default_port": 9370,
+  "requires": {
+    "openswarm-connector": ">=0.1.0"
+  }
+}

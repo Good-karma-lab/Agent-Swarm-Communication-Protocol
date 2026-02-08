@@ -1,6 +1,6 @@
 [package]
 name = "openswarm-connector"
-description = "JSON-RPC API server and CLI binary for OpenSwarm Connector sidecar"
+description = "JSON-RPC API server and CLI binary for Open Swarm Connector sidecar"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -26,6 +26,8 @@ toml = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 clap = { version = "4", features = ["derive"] }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
 
 [dev-dependencies]
 ed25519-dalek = { workspace = true }

@@ -25,6 +25,7 @@ use openswarm_protocol::*;
 use openswarm_state::{ContentStore, GranularityAlgorithm, MerkleDag, OrSet};
 
 use crate::config::ConnectorConfig;
+use crate::tui::{LogCategory, LogEntry};
 
 /// Status of the connector.
 #[derive(Debug, Clone)]
@@ -77,9 +78,27 @@ pub struct ConnectorState {
     pub parent_id: Option<AgentId>,
     /// Network statistics cache.
     pub network_stats: NetworkStats,
+    /// Event log for the TUI.
+    pub event_log: Vec<LogEntry>,
+    /// Timestamp when the connector started.
+    pub start_time: chrono::DateTime<chrono::Utc>,
 }
 
-/// The main OpenSwarm Connector that orchestrates all subsystems.
+impl ConnectorState {
+    /// Push a log entry, capping the log at 1000 entries.
+    pub fn push_log(&mut self, category: LogCategory, message: String) {
+        if self.event_log.len() >= 1000 {
+            self.event_log.remove(0);
+        }
+        self.event_log.push(LogEntry {
+            timestamp: chrono::Utc::now(),
+            category,
+            message,
+        });
+    }
+}
+
+/// The main Open Swarm Connector that orchestrates all subsystems.
 ///
 /// Created from a configuration, it initializes the network, hierarchy,
 /// consensus, and state modules, then runs the event loop that ties
@@ -158,6 +177,8 @@ impl OpenSwarmConnector {
                 subordinate_count: 0,
                 parent_id: None,
             },
+            event_log: Vec::new(),
+            start_time: chrono::Utc::now(),
         };
 
         Ok(Self {
@@ -193,9 +214,13 @@ impl OpenSwarmConnector {
         {
             let mut state = self.state.write().await;
             state.status = ConnectorStatus::Running;
+            state.push_log(
+                LogCategory::System,
+                "Open Swarm Connector started".to_string(),
+            );
         }
 
-        tracing::info!("OpenSwarm Connector is running");
+        tracing::info!("Open Swarm Connector is running");
 
         // Take the event receiver out of self so we can use both in the loop.
         let mut event_rx = self
@@ -226,12 +251,23 @@ impl OpenSwarmConnector {
     async fn handle_network_event(&self, event: NetworkEvent) {
         match event {
             NetworkEvent::MessageReceived { topic, data, source, .. } => {
+                {
+                    let mut state = self.state.write().await;
+                    state.push_log(
+                        LogCategory::Message,
+                        format!("Message received on {} from {}", topic, source),
+                    );
+                }
                 self.handle_message(&topic, &data, source).await;
             }
             NetworkEvent::PeerConnected(peer) => {
                 tracing::debug!(peer = %peer, "Peer connected");
                 let mut state = self.state.write().await;
                 state.agent_set.add(peer.to_string());
+                state.push_log(
+                    LogCategory::Peer,
+                    format!("Connected: {}", peer),
+                );
                 // Update swarm size estimate.
                 if let Ok(size) = self.network_handle.estimated_swarm_size().await {
                     state.network_stats.total_agents = size;
@@ -241,6 +277,10 @@ impl OpenSwarmConnector {
                 tracing::debug!(peer = %peer, "Peer disconnected");
                 let mut state = self.state.write().await;
                 state.agent_set.remove(&peer.to_string());
+                state.push_log(
+                    LogCategory::Peer,
+                    format!("Disconnected: {}", peer),
+                );
             }
             NetworkEvent::PingRtt { peer, rtt } => {
                 tracing::trace!(peer = %peer, rtt_ms = rtt.as_millis(), "Ping RTT");
@@ -260,6 +300,11 @@ impl OpenSwarmConnector {
             Ok(m) => m,
             Err(e) => {
                 tracing::warn!(error = %e, "Failed to parse swarm message");
+                let mut state = self.state.write().await;
+                state.push_log(
+                    LogCategory::Error,
+                    format!("Failed to parse message on {}: {}", topic, e),
+                );
                 return;
             }
         };
@@ -269,6 +314,10 @@ impl OpenSwarmConnector {
                 if let Ok(params) = serde_json::from_value::<KeepAliveParams>(message.params) {
                     let mut state = self.state.write().await;
                     state.succession.record_keepalive(&params.agent_id);
+                    state.push_log(
+                        LogCategory::Message,
+                        format!("KeepAlive from {}", params.agent_id),
+                    );
                 }
             }
             Some(ProtocolMethod::Candidacy) => {
@@ -307,6 +356,10 @@ impl OpenSwarmConnector {
                 if let Ok(params) = serde_json::from_value::<TaskInjectionParams>(message.params) {
                     let mut state = self.state.write().await;
                     state.task_set.add(params.task.task_id.clone());
+                    state.push_log(
+                        LogCategory::Task,
+                        format!("New task assigned: {}", params.task.task_id),
+                    );
                     tracing::info!(
                         task_id = %params.task.task_id,
                         "Task injected"
@@ -341,10 +394,12 @@ impl OpenSwarmConnector {
                 if let Ok(params) =
                     serde_json::from_value::<ConsensusVoteParams>(message.params)
                 {
+                    let task_id = params.task_id.clone();
+                    let voter = params.voter.clone();
                     let mut state = self.state.write().await;
-                    if let Some(voting) = state.voting_engines.get_mut(&params.task_id) {
+                    if let Some(voting) = state.voting_engines.get_mut(&task_id) {
                         let ranked_vote = RankedVote {
-                            voter: params.voter,
+                            voter: voter.clone(),
                             task_id: params.task_id,
                             epoch: params.epoch,
                             rankings: params.rankings,
@@ -354,6 +409,10 @@ impl OpenSwarmConnector {
                             tracing::warn!(error = %e, "Failed to record consensus vote");
                         }
                     }
+                    state.push_log(
+                        LogCategory::Vote,
+                        format!("Consensus vote recorded for {} from {}", task_id, voter),
+                    );
                 }
             }
             Some(ProtocolMethod::ResultSubmission) => {
@@ -438,11 +497,19 @@ impl OpenSwarmConnector {
                     let election_config = openswarm_hierarchy::elections::ElectionConfig::default();
                     state.election = Some(ElectionManager::new(election_config, new_epoch));
                     state.status = ConnectorStatus::InElection;
+                    state.push_log(
+                        LogCategory::Epoch,
+                        format!("Epoch {} election triggered (swarm size: {})", new_epoch, estimated_swarm_size),
+                    );
                 }
                 openswarm_hierarchy::epoch::EpochAction::FinalizeTransition { epoch } => {
                     tracing::info!(epoch, "Finalizing epoch transition");
                     // In production, this would tally votes and advance the epoch.
                     state.status = ConnectorStatus::Running;
+                    state.push_log(
+                        LogCategory::Epoch,
+                        format!("Epoch {} transition finalized", epoch),
+                    );
                 }
             }
         }
