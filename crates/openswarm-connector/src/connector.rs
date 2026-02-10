@@ -819,3 +819,141 @@ impl OpenSwarmConnector {
         self.network_handle.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_bootstrap_peers_valid_multiaddr_with_peer_id() {
+        // Use a valid Ed25519 peer ID (base58btc encoded).
+        let peer_id = PeerId::random();
+        let addr = format!("/ip4/192.168.1.1/tcp/9000/p2p/{}", peer_id);
+        let result = OpenSwarmConnector::parse_bootstrap_peers(&[addr]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, peer_id);
+    }
+
+    #[test]
+    fn parse_bootstrap_peers_missing_peer_id() {
+        let addr = "/ip4/192.168.1.1/tcp/9000".to_string();
+        let result = OpenSwarmConnector::parse_bootstrap_peers(&[addr]);
+        assert!(result.is_empty(), "Should skip addrs without /p2p/ component");
+    }
+
+    #[test]
+    fn parse_bootstrap_peers_invalid_multiaddr() {
+        let addr = "not-a-valid-multiaddr".to_string();
+        let result = OpenSwarmConnector::parse_bootstrap_peers(&[addr]);
+        assert!(result.is_empty(), "Should skip unparseable addrs");
+    }
+
+    #[test]
+    fn parse_bootstrap_peers_empty_and_whitespace_skipped() {
+        let addrs = vec![
+            "".to_string(),
+            "   ".to_string(),
+        ];
+        let result = OpenSwarmConnector::parse_bootstrap_peers(&addrs);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn parse_bootstrap_peers_multiple_valid() {
+        let peer1 = PeerId::random();
+        let peer2 = PeerId::random();
+        let addrs = vec![
+            format!("/ip4/10.0.0.1/tcp/4001/p2p/{}", peer1),
+            format!("/ip4/10.0.0.2/tcp/4001/p2p/{}", peer2),
+        ];
+        let result = OpenSwarmConnector::parse_bootstrap_peers(&addrs);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].0, peer1);
+        assert_eq!(result[1].0, peer2);
+    }
+
+    #[test]
+    fn parse_bootstrap_peers_mixed_valid_and_invalid() {
+        let peer1 = PeerId::random();
+        let addrs = vec![
+            format!("/ip4/10.0.0.1/tcp/4001/p2p/{}", peer1),
+            "/ip4/10.0.0.2/tcp/4001".to_string(), // no peer id
+            "garbage".to_string(),                  // unparseable
+        ];
+        let result = OpenSwarmConnector::parse_bootstrap_peers(&addrs);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, peer1);
+    }
+
+    #[test]
+    fn extract_peer_id_from_valid_addr() {
+        let peer_id = PeerId::random();
+        let addr = format!("/ip4/127.0.0.1/tcp/8080/p2p/{}", peer_id);
+        let extracted = OpenSwarmConnector::extract_peer_id_from_addr(&addr);
+        assert_eq!(extracted, Some(peer_id));
+    }
+
+    #[test]
+    fn extract_peer_id_from_addr_without_p2p() {
+        let addr = "/ip4/127.0.0.1/tcp/8080";
+        let extracted = OpenSwarmConnector::extract_peer_id_from_addr(addr);
+        assert!(extracted.is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires networking support"]
+    async fn connector_new_with_default_config() {
+        let config = ConnectorConfig::default();
+        let connector = OpenSwarmConnector::new(config);
+        assert!(connector.is_ok(), "Connector should initialize with default config");
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires networking support"]
+    async fn connector_new_passes_bootstrap_peers_to_discovery() {
+        let mut config = ConnectorConfig::default();
+        let peer_id = PeerId::random();
+        config.network.bootstrap_peers = vec![
+            format!("/ip4/10.0.0.1/tcp/9000/p2p/{}", peer_id),
+        ];
+        let connector = OpenSwarmConnector::new(config);
+        assert!(connector.is_ok(), "Connector should initialize with bootstrap peers");
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires networking support"]
+    async fn connector_run_connects_to_swarm_on_start() {
+        let config = ConnectorConfig::default();
+        let connector = OpenSwarmConnector::new(config).unwrap();
+        let state = connector.shared_state();
+
+        // Run the connector with a timeout; it will reach Running status
+        // within the timeout, then we abort via select.
+        let state_clone = state.clone();
+        tokio::select! {
+            _ = connector.run() => {}
+            _ = async {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    let s = state_clone.read().await;
+                    if matches!(s.status, ConnectorStatus::Running) {
+                        break;
+                    }
+                }
+            } => {}
+            _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                panic!("Timed out waiting for connector to reach Running status");
+            }
+        }
+
+        let s = state.read().await;
+        assert!(
+            matches!(s.status, ConnectorStatus::Running),
+            "Connector should be Running after start"
+        );
+        assert!(
+            s.event_log.iter().any(|e| e.message.contains("ASCP Connector started")),
+            "Should have startup log entry"
+        );
+    }
+}
