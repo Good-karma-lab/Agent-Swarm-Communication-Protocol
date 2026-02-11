@@ -763,6 +763,14 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Re
 ///
 /// The TUI properly restores terminal state on exit, including on panic.
 pub async fn run_tui(state: Arc<RwLock<ConnectorState>>) -> Result<(), anyhow::Error> {
+    // Check if we're in a TTY environment before attempting to initialize TUI
+    use std::io::IsTerminal;
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        return Err(anyhow::anyhow!(
+            "TUI mode requires a terminal (TTY). Use --no-tui flag when running in background or without a terminal."
+        ));
+    }
+
     // Set up a panic hook that restores the terminal.
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {

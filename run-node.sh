@@ -202,12 +202,18 @@ cleanup() {
 trap cleanup INT TERM
 
 # Run the connector
-eval $CMD &
-CONNECTOR_PID=$!
-echo $CONNECTOR_PID > "$PID_FILE"
+if [ "$TUI_MODE" = true ]; then
+    # Run in foreground for TUI mode (needs stdin for keyboard input)
+    eval $CMD
+else
+    # Run in background for non-TUI mode
+    eval $CMD &
+    CONNECTOR_PID=$!
+    echo $CONNECTOR_PID > "$PID_FILE"
 
-# Wait for the connector to start
-sleep 2
+    # Wait for the connector to start
+    sleep 2
+fi
 
 # Extract and display the peer ID
 if [ "$TUI_MODE" = false ]; then
@@ -243,8 +249,10 @@ INFOEOF
 
         echo -e "${BLUE}Connection info saved to:${NC} $INFO_FILE"
         echo ""
+    else
+        echo -e "${RED}✗ Failed to get peer ID. Check if the connector started correctly.${NC}"
     fi
-fi
 
-# Wait for the process to finish
-wait $CONNECTOR_PID
+    # Wait for the process to finish
+    wait $CONNECTOR_PID
+fi

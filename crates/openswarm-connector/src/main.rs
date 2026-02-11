@@ -152,7 +152,12 @@ async fn main() -> anyhow::Result<()> {
         let tui_state = state.clone();
         let tui_handle = tokio::spawn(async move {
             if let Err(e) = openswarm_connector::tui::run_tui(tui_state).await {
-                tracing::error!(error = %e, "TUI error");
+                let err_msg = e.to_string();
+                if err_msg.contains("TTY") || err_msg.contains("terminal") {
+                    tracing::warn!("TUI mode disabled: {}. Continuing in non-TUI mode.", err_msg);
+                } else {
+                    tracing::error!(error = %e, "TUI error");
+                }
             }
         });
 
