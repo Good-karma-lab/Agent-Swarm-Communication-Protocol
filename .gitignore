@@ -57,3 +57,13 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Phase 6: Local LLM files
+models/
+llama.cpp/
+llama-server.log
+llama-server.pid
+*.gguf
+
+# Zeroclaw temp files
+/tmp/zeroclaw-instructions-*.txt

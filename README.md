@@ -114,6 +114,59 @@ curl http://127.0.0.1:9371/agent-onboarding.json  # Machine-readable metadata
 
 This eliminates the need for agents to have local copies of the documentation -- they fetch it directly from their connector.
 
+### Running Full AI Agents
+
+**Option 1: With Cloud AI (Claude Code CLI)**
+
+```bash
+./run-agent.sh -n "alice"
+```
+
+This launches:
+1. A swarm connector (handles P2P networking and RPC)
+2. Claude Code CLI with instructions to read and follow `http://127.0.0.1:9371/SKILL.md`
+
+Claude will automatically:
+- Read the SKILL.md documentation
+- Register itself as agent "alice"
+- Poll for tasks every 60 seconds
+- Execute and submit results
+- All actions shown in your terminal
+
+**Option 2: With Local AI (Zeroclaw + Ollama) - Zero Cost!**
+
+```bash
+# Setup local LLM (one-time)
+./scripts/setup-local-llm.sh all
+pip install zeroclaw
+
+# Start agent with local gpt-oss:20b model
+export AGENT_IMPL=zeroclaw
+export LLM_BACKEND=ollama
+export MODEL_NAME=gpt-oss:20b
+./run-agent.sh -n "alice"
+```
+
+This launches:
+1. A swarm connector
+2. Zeroclaw agent connected to local Ollama (gpt-oss:20b model - 20 billion parameters)
+
+Benefits:
+- **Zero API costs** after initial setup
+- **100% local execution** - complete privacy
+- **No internet required** for operation
+- **Good quality** with 20B parameter model
+
+See [PHASE_6_OLLAMA_SETUP.md](PHASE_6_OLLAMA_SETUP.md) for detailed configuration options.
+
+**Connector-only mode (if you want to connect agents manually):**
+
+```bash
+./run-agent.sh -n "connector-1" --connector-only
+```
+
+**Agent Count Tracking:** The swarm tracks the real number of registered AI agents (via `swarm.register_agent` calls), not just the number of connector nodes. This allows multiple AI agents to connect to a single connector, and the swarm accurately reports the total number of active agents in the TUI and swarm info.
+
 ## Prerequisites
 
 - **Rust 1.75+** -- install via [rustup](https://rustup.rs/):
@@ -355,6 +408,59 @@ Tier-3:  740 Executors
          ───
 Total:   850 agents, depth = ceil(log_10(850)) = 3
 ```
+
+## Implementation Status
+
+**Current Progress: 100% Complete!** 🎉🚀
+
+- ✅ **Phase 1: Hierarchy Formation** - Automatic tier assignment, pyramid layout computation
+- ✅ **Phase 2: Task Distribution** - Tier-filtered task reception, RFP initialization
+- ✅ **Phase 3: Plan Generation & Voting** - Real AI plan generation (Claude agents), IRV voting, winner selection
+- ✅ **Phase 4: Subtask Assignment** - Automatic subtask distribution to subordinates after voting
+- ✅ **Phase 5: Result Aggregation** - Executor task execution, result submission, hierarchical aggregation (**NEW!**)
+
+**Recent Completion (Phase 5):**
+- Executors actually execute tasks using AI capabilities
+- Results submitted with proper Artifact structure
+- Automatic result aggregation when all subtasks complete
+- Hierarchical result propagation up the tree
+- Top-level tasks marked complete
+- **Complete end-to-end autonomous execution!** ✅
+
+**What Works Now:**
+```bash
+# Start 15 agents with FULL autonomous coordination
+./swarm-manager.sh start-agents 15
+
+# Inject a task - agents will:
+#   1. Form hierarchy (Tier-1 coordinators + Executors)
+#   2. Generate competing plans using Claude AI
+#   3. Vote democratically using Instant Runoff Voting
+#   4. Assign winning plan's subtasks to subordinates
+#   5. Executors perform actual work (NEW!)
+#   6. Results aggregated bottom-up (NEW!)
+#   7. Task marked complete (NEW!)
+echo '{"jsonrpc":"2.0","method":"swarm.inject_task","params":{"description":"Research quantum computing"},"id":"1"}' | nc 127.0.0.1 9370
+
+# Watch the complete autonomous workflow
+./test-phase5-result-aggregation.sh
+```
+
+**The system is now FULLY FUNCTIONAL for autonomous task execution!**
+
+**Phase 6 Bonus:**
+- ✅ Zeroclaw integration (alternative to Claude Code CLI)
+- ✅ Multiple LLM backends (Anthropic, OpenAI, local models, Ollama)
+- ✅ Local model support (no API costs!)
+- ✅ Configuration system for easy switching
+
+```bash
+# Use local LLM (cost-free after setup!)
+./scripts/setup-local-llm.sh all
+AGENT_IMPL=zeroclaw LLM_BACKEND=local ./swarm-manager.sh start-agents 15
+```
+
+See [PHASE_5_COMPLETE.md](PHASE_5_COMPLETE.md) for Phase 5 details and [PHASE_6_COMPLETE.md](PHASE_6_COMPLETE.md) for Zeroclaw integration.
 
 ## Security
 

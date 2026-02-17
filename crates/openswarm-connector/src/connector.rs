@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, RwLock};
 
-use openswarm_consensus::{CascadeEngine, RfpCoordinator, VotingEngine};
+use openswarm_consensus::{CascadeEngine, PlanGenerator, RfpCoordinator, VotingEngine};
 use openswarm_hierarchy::{
     EpochManager, GeoCluster, PyramidAllocator, SuccessionManager,
     elections::ElectionManager,
@@ -111,6 +111,16 @@ pub struct ConnectorState {
     pub my_tier: Tier,
     /// Our parent agent ID (None if Tier-1).
     pub parent_id: Option<AgentId>,
+    /// Maps agent_id -> assigned tier (for all known agents).
+    pub agent_tiers: std::collections::HashMap<String, Tier>,
+    /// Maps agent_id -> parent agent_id (for Tier-2+ agents).
+    pub agent_parents: std::collections::HashMap<String, String>,
+    /// Current pyramid layout (recomputed on swarm size changes).
+    pub current_layout: Option<openswarm_hierarchy::pyramid::PyramidLayout>,
+    /// Tracks subordinates for each coordinator: parent_id -> [child_ids].
+    pub subordinates: std::collections::HashMap<String, Vec<String>>,
+    /// Stores task results (artifacts) keyed by task_id.
+    pub task_results: std::collections::HashMap<String, Artifact>,
     /// Network statistics cache.
     pub network_stats: NetworkStats,
     /// Event log for the TUI.
@@ -260,6 +270,11 @@ impl OpenSwarmConnector {
             granularity: GranularityAlgorithm::default(),
             my_tier: Tier::Executor,
             parent_id: None,
+            agent_tiers: std::collections::HashMap::new(),
+            agent_parents: std::collections::HashMap::new(),
+            current_layout: None,
+            subordinates: std::collections::HashMap::new(),
+            task_results: std::collections::HashMap::new(),
             network_stats: NetworkStats {
                 total_agents: 1,
                 hierarchy_depth: 1,
@@ -353,6 +368,8 @@ impl OpenSwarmConnector {
         let announce_secs = self.config.swarm.announce_interval_secs;
         let mut swarm_announce_interval =
             tokio::time::interval(Duration::from_secs(announce_secs));
+        // Voting completion check every 5 seconds
+        let mut voting_check_interval = tokio::time::interval(Duration::from_secs(5));
 
         loop {
             tokio::select! {
@@ -367,6 +384,9 @@ impl OpenSwarmConnector {
                 }
                 _ = swarm_announce_interval.tick() => {
                     self.announce_swarm().await;
+                }
+                _ = voting_check_interval.tick() => {
+                    self.check_voting_completion().await;
                 }
             }
         }
@@ -503,6 +523,33 @@ impl OpenSwarmConnector {
             Some(ProtocolMethod::TaskInjection) => {
                 if let Ok(params) = serde_json::from_value::<TaskInjectionParams>(message.params) {
                     let mut state = self.state.write().await;
+
+                    // Tier-filtered task reception: only process tasks for our tier level
+                    let my_tier = state.my_tier;
+                    let task_tier_level = params.task.tier_level;
+
+                    // Each tier processes tasks at its level:
+                    // - Tier1 processes tier_level 1
+                    // - Tier2 processes tier_level 2
+                    // - TierN(n) processes tier_level n
+                    // - Executor processes any tier_level (leaf workers)
+                    let my_tier_level = my_tier.depth();
+                    let should_process = match my_tier {
+                        Tier::Executor => true, // Executors handle any level (leaf work)
+                        _ => my_tier_level == task_tier_level, // Coordinators only handle their level
+                    };
+
+                    if !should_process {
+                        tracing::debug!(
+                            task_id = %params.task.task_id,
+                            my_tier = ?my_tier,
+                            task_tier = task_tier_level,
+                            "Ignoring task for different tier"
+                        );
+                        drop(state);
+                        return;
+                    }
+
                     state.task_set.add(params.task.task_id.clone());
                     state
                         .task_details
@@ -516,19 +563,56 @@ impl OpenSwarmConnector {
                     state.push_log(
                         LogCategory::Task,
                         format!(
-                            "Task injected: {} ({})",
+                            "Task injected at my tier: {} ({})",
                             params.task.task_id, params.task.description
                         ),
                     );
+
+                    // All coordinator tiers initialize RFP for competitive planning
+                    let is_coordinator = my_tier != Tier::Executor;
+                    let task_id = params.task.task_id.clone();
+                    let epoch = params.task.epoch;
+
+                    if is_coordinator {
+                        // Count agents at my tier level for quorum
+                        let my_tier_agents = state.agent_tiers.values()
+                            .filter(|t| **t == my_tier)
+                            .count();
+
+                        if my_tier_agents > 0 {
+                            let mut rfp = RfpCoordinator::new(
+                                task_id.clone(),
+                                epoch,
+                                my_tier_agents,
+                            );
+
+                            if let Err(e) = rfp.inject_task(&params.task) {
+                                tracing::error!(error = %e, "Failed to initialize RFP");
+                            } else {
+                                state.rfp_coordinators.insert(task_id.clone(), rfp);
+                                state.push_log(
+                                    LogCategory::Task,
+                                    format!("RFP initialized for task {} with {} {:?} agents", task_id, my_tier_agents, my_tier),
+                                );
+                            }
+                        }
+                    }
+
                     tracing::info!(
                         task_id = %params.task.task_id,
-                        "Task injected"
+                        my_tier = ?my_tier,
+                        is_coordinator,
+                        "Task received and accepted"
                     );
 
                     let swarm_id = state.current_swarm_id.as_str().to_string();
-                    let task_id = params.task.task_id.clone();
                     drop(state);
+
                     self.subscribe_task_flow_topics(&swarm_id, &task_id).await;
+
+                    // Note: Plan generation is now delegated to Claude CLI agents
+                    // Tier-1 agents will generate plans using their AI capabilities
+                    // via the swarm.propose_plan RPC method
                 }
             }
             Some(ProtocolMethod::TaskAssignment) => {
@@ -819,7 +903,8 @@ impl OpenSwarmConnector {
     /// discovery.
     async fn announce_swarm(&self) {
         let state = self.state.read().await;
-        let agent_count = state.agent_set.len() as u64 + 1; // +1 for self
+        // Count all registered agents (via register_agent RPC calls) to get actual agent count
+        let agent_count = state.member_set.len() as u64;
         let params = SwarmAnnounceParams {
             swarm_id: state.current_swarm_id.clone(),
             name: self.config.swarm.name.clone(),
@@ -946,6 +1031,240 @@ impl OpenSwarmConnector {
         }
     }
 
+    /// Check if any voting engines have reached quorum and run IRV.
+    async fn check_voting_completion(&self) {
+        let mut state = self.state.write().await;
+        let mut completed_votes = Vec::new();
+
+        // Collect voting results first (to avoid borrow issues)
+        let mut results_to_process = Vec::new();
+
+        for (task_id, voting_engine) in &mut state.voting_engines {
+            let ballot_count = voting_engine.ballot_count();
+            let proposal_count = voting_engine.proposal_count();
+
+            // Check if we have enough votes (at least equal to proposal count means all voters participated)
+            // In a real system, we'd also check for timeouts
+            if ballot_count >= proposal_count && ballot_count > 0 {
+                tracing::info!(
+                    task_id = %task_id,
+                    ballot_count,
+                    proposal_count,
+                    "Voting quorum reached, running IRV"
+                );
+
+                // Run Instant Runoff Voting to select winner
+                match voting_engine.run_irv() {
+                    Ok(result) => {
+                        results_to_process.push((task_id.clone(), Ok(result)));
+                        completed_votes.push(task_id.clone());
+                    }
+                    Err(e) => {
+                        results_to_process.push((task_id.clone(), Err(e)));
+                    }
+                }
+            }
+        }
+
+        // Process results (now we can mutably borrow state again)
+        for (task_id, result) in results_to_process {
+            match result {
+                Ok(voting_result) => {
+                    state.push_log(
+                        LogCategory::Vote,
+                        format!(
+                            "Voting complete for task {}: winner = {} ({} rounds, {} votes)",
+                            task_id, voting_result.winner, voting_result.rounds, voting_result.total_votes
+                        ),
+                    );
+
+                    state.push_task_timeline_event(
+                        &task_id,
+                        "plan_selected",
+                        format!("Plan {} selected by IRV after {} rounds", voting_result.winner, voting_result.rounds),
+                        None,
+                    );
+
+                    // Update task status to InProgress
+                    if let Some(task) = state.task_details.get_mut(&task_id) {
+                        task.status = TaskStatus::InProgress;
+                    }
+
+                    tracing::info!(
+                        task_id = %task_id,
+                        winner = %voting_result.winner,
+                        rounds = voting_result.rounds,
+                        "Voting completed successfully"
+                    );
+
+                    // Now assign subtasks to subordinates
+                    if let Err(e) = self.assign_subtasks_from_winner(&task_id, &voting_result.winner).await {
+                        tracing::error!(
+                            task_id = %task_id,
+                            winner = %voting_result.winner,
+                            error = %e,
+                            "Failed to assign subtasks after voting"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        task_id = %task_id,
+                        "IRV execution failed"
+                    );
+                    state.push_log(
+                        LogCategory::Vote,
+                        format!("Voting failed for task {}: {}", task_id, e),
+                    );
+                }
+            }
+        }
+
+        // Remove completed voting engines
+        for task_id in completed_votes {
+            state.voting_engines.remove(&task_id);
+        }
+    }
+
+    /// Assign subtasks from the winning plan to subordinate agents.
+    async fn assign_subtasks_from_winner(
+        &self,
+        task_id: &str,
+        winner_plan_id: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let mut state = self.state.write().await;
+
+        // Get the winning plan from RFP coordinator
+        let winning_plan = {
+            let rfp = state.rfp_coordinators.get(task_id)
+                .ok_or("RFP coordinator not found")?;
+
+            // Get the revealed proposal matching the winner
+            let revealed_proposal = rfp.reveals
+                .values()
+                .find(|p| p.plan.plan_id == winner_plan_id)
+                .ok_or("Winning plan not found in reveals")?;
+
+            revealed_proposal.plan.clone()
+        };
+
+        // Get my subordinates for assignment
+        let subordinates: Vec<AgentId> = state.subordinates
+            .get(state.agent_id.as_str())
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(AgentId::new)
+            .collect();
+
+        if subordinates.is_empty() {
+            tracing::warn!(
+                task_id = %task_id,
+                "No subordinates available to assign subtasks"
+            );
+            return Ok(());
+        }
+
+        let parent_tier = state.task_details
+            .get(task_id)
+            .map(|t| t.tier_level)
+            .unwrap_or(1);
+
+        let swarm_id = state.current_swarm_id.clone();
+        let mut subtask_ids = Vec::new();
+        let mut assignment_messages = Vec::new();
+
+        // Create subtasks and assignment messages
+        for (idx, subtask_spec) in winning_plan.subtasks.iter().enumerate() {
+            let subtask_id = format!("{}-st-{}", task_id, idx + 1);
+            let assignee = subordinates[idx % subordinates.len()].clone();
+
+            let subtask = Task {
+                task_id: subtask_id.clone(),
+                parent_task_id: Some(task_id.to_string()),
+                epoch: winning_plan.epoch,
+                status: TaskStatus::InProgress,
+                description: subtask_spec.description.clone(),
+                assigned_to: Some(assignee.clone()),
+                tier_level: (parent_tier + 1).min(openswarm_protocol::MAX_HIERARCHY_DEPTH),
+                subtasks: Vec::new(),
+                created_at: chrono::Utc::now(),
+                deadline: None,
+            };
+
+            // Store subtask in state
+            state.task_details.insert(subtask_id.clone(), subtask.clone());
+
+            // Log subtask creation
+            state.push_task_timeline_event(
+                task_id,
+                "subtask_assigned",
+                format!("Subtask {} assigned to {}", subtask_id, assignee),
+                Some(assignee.to_string()),
+            );
+
+            subtask_ids.push(subtask_id.clone());
+
+            // Create task assignment message
+            let assign_params = TaskAssignmentParams {
+                task: subtask,
+                assignee: assignee.clone(),
+                parent_task_id: task_id.to_string(),
+                winning_plan_id: winner_plan_id.to_string(),
+            };
+
+            let assign_msg = SwarmMessage::new(
+                ProtocolMethod::TaskAssignment.as_str(),
+                serde_json::to_value(&assign_params).unwrap_or_default(),
+                String::new(),
+            );
+
+            if let Ok(data) = serde_json::to_vec(&assign_msg) {
+                let topic = SwarmTopics::tasks_for(swarm_id.as_str(), assign_params.task.tier_level);
+                assignment_messages.push((topic, data));
+            }
+
+            tracing::info!(
+                task_id = %task_id,
+                subtask_id = %subtask_id,
+                assignee = %assignee,
+                "Subtask assigned to subordinate"
+            );
+        }
+
+        // Update parent task with subtask IDs
+        if let Some(parent_task) = state.task_details.get_mut(task_id) {
+            parent_task.subtasks = subtask_ids;
+        }
+
+        state.push_log(
+            LogCategory::Task,
+            format!(
+                "Assigned {} subtasks from winning plan {} to {} subordinates",
+                winning_plan.subtasks.len(),
+                winner_plan_id,
+                subordinates.len()
+            ),
+        );
+
+        // Drop the write lock before publishing
+        drop(state);
+
+        // Publish all assignment messages
+        for (topic, data) in assignment_messages {
+            if let Err(e) = self.network_handle.publish(&topic, data).await {
+                tracing::error!(
+                    topic = %topic,
+                    error = %e,
+                    "Failed to publish task assignment"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     /// Parse bootstrap peer multiaddresses (e.g. "/ip4/1.2.3.4/tcp/9000/p2p/12D3...")
     /// into (PeerId, Multiaddr) pairs for the discovery layer.
     fn parse_bootstrap_peers(addrs: &[String]) -> Vec<(PeerId, Multiaddr)> {
@@ -1066,6 +1385,93 @@ impl OpenSwarmConnector {
     /// Get the network handle for use by the RPC server.
     pub fn network_handle(&self) -> SwarmHandle {
         self.network_handle.clone()
+    }
+
+    /// Generate and propose a plan for a task (Tier-1 only).
+    ///
+    /// This method should only be called for Tier-1 agents. It:
+    /// 1. Uses a MockPlanGenerator to create a decomposition plan
+    /// 2. Submits the plan via the propose_plan RPC method
+    async fn do_generate_and_propose_plan(
+        task: &Task,
+        state: &Arc<RwLock<ConnectorState>>,
+        network_handle: &SwarmHandle,
+        config: &ConnectorConfig,
+    ) {
+        let state_read = state.read().await;
+
+        // Only Tier-1 agents propose plans
+        if state_read.my_tier != Tier::Tier1 {
+            return;
+        }
+
+        let task_id = task.task_id.clone();
+        let agent_id = state_read.agent_id.clone();
+        let epoch = state_read.epoch_manager.current_epoch();
+
+        // Determine number of available subordinates
+        let available_agents = state_read.subordinates
+            .get(state_read.agent_id.as_str())
+            .map(|s| s.len() as u64)
+            .unwrap_or_else(|| {
+                // Fallback: estimate from total members / 10
+                state_read.member_set.len() as u64 / 10
+            });
+
+        let branching_factor = config.hierarchy.branching_factor;
+
+        drop(state_read);
+
+        // Create plan context
+        let context = openswarm_consensus::rfp::PlanContext {
+            task: task.clone(),
+            epoch,
+            available_agents,
+            branching_factor,
+            known_capabilities: vec![],
+        };
+
+        // Use mock planner to generate plan
+        let planner = openswarm_consensus::MockPlanGenerator::new(agent_id);
+
+        match planner.generate_plan(&context).await {
+            Ok(plan) => {
+                // Submit plan via RPC (use handle_propose_plan directly)
+                let params = serde_json::to_value(&plan).unwrap_or_default();
+                let _response = crate::rpc_server::handle_propose_plan(
+                    Some("internal".to_string()),
+                    &params,
+                    state,
+                    network_handle,
+                ).await;
+
+                tracing::info!(
+                    task_id = %task_id,
+                    plan_id = %plan.plan_id,
+                    subtasks = plan.subtasks.len(),
+                    "Plan generated and proposed"
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    task_id = %task_id,
+                    "Plan generation failed"
+                );
+            }
+        }
+    }
+}
+
+impl Clone for OpenSwarmConnector {
+    fn clone(&self) -> Self {
+        Self {
+            state: Arc::clone(&self.state),
+            network_handle: self.network_handle.clone(),
+            event_rx: None, // Don't clone the event receiver (consumed by run())
+            swarm_host: None, // Don't clone the swarm host (consumed by run())
+            config: self.config.clone(),
+        }
     }
 }
 
