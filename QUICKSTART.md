@@ -46,8 +46,9 @@ All shell scripts now share this same LLM config (`scripts/load-env.sh`).
 # With a name and verbose logging
 ./openswarm-connector --agent-name "my-agent" -v
 
-# With operator console (interactive task injection + hierarchy view)
-./openswarm-connector --agent-name "my-agent" --console
+# With web console (recommended)
+./openswarm-connector --agent-name "my-agent"
+# then open http://127.0.0.1:9371/
 
 # With TUI monitoring dashboard
 ./openswarm-connector --agent-name "my-agent" --tui
@@ -155,7 +156,7 @@ This will:
 Start multiple connectors + agents that auto-discover each other on the same LAN:
 
 ```bash
-./swarm-manager.sh start-agents 3  # Start 3 full agents (connector + Claude CLI)
+./swarm-manager.sh start-agents 3  # Start 3 full agents (connector + <Agent>)
 ./swarm-manager.sh status          # Check all nodes
 ./swarm-manager.sh stop            # Stop all nodes
 ```
@@ -169,7 +170,10 @@ Start multiple connectors + agents that auto-discover each other on the same LAN
 ./swarm-manager.sh status
 ```
 
-### Start a dedicated operator console connector
+`swarm-manager.sh start-agents` now auto-assigns Nobel-laureate-inspired agent names
+(e.g. `marie-curie`, `albert-einstein`, `niels-bohr`, ...).
+
+### Start a dedicated operator web connector
 
 ```bash
 # get bootstrap address from first node
@@ -183,17 +187,18 @@ BOOTSTRAP_ADDR="/ip4/127.0.0.1/tcp/$P2P_PORT/p2p/$PEER_ID"
   --rpc 127.0.0.1:9930 \
   --files-addr 127.0.0.1:9931 \
   --bootstrap "$BOOTSTRAP_ADDR" \
-  --agent-name operator-30 \
-  --console
+  --agent-name operator-30
+
+# open web dashboard
+open http://127.0.0.1:9931/
 ```
 
-In console, run:
-- `/status` (overall health)
-- `/hierarchy` (tier tree)
-- `/flow` (decomposition/voting/results counters)
-- `/votes` (voting engine state)
-- `/tasks` then `/timeline <task_id>`
-- Type a task description and press Enter to inject.
+In web dashboard, use:
+- Task submit form (inject work)
+- Hierarchy tab (tier tree)
+- Voting tab (plans + vote flow)
+- Messages tab (p2p debug stream)
+- Task tab (decomposition/propagation/aggregation trace)
 
 ### Validate swarm features from RPC
 
@@ -309,20 +314,40 @@ LOCAL_MODEL_PATH=./models/gpt-oss-20b.gguf
 
 See [PHASE_6_COMPLETE.md](PHASE_6_COMPLETE.md) for detailed setup and configuration options.
 
-## 10. Operator Console
+## 10. Web Console
 
-The operator console gives you an interactive TUI to manage the swarm:
+Open the React dashboard served by the connector:
+
+```bash
+./openswarm-connector --agent-name "operator"
+# open http://127.0.0.1:9371/
+```
+
+Features:
+- **Expandable hierarchy** of agents by tier, parent, task count, last-seen
+- **Voting logs** for commit/reveal/plans and ballot progression
+- **P2P message logs** with topic, method, peer, and outcomes
+- **Task submission** directly from the UI
+- **Task forensics**: decomposition, plan variants, voting, propagation, assignment, responses, aggregation
+- **Swarm topology** nodes/edges payload for visualization/debug
+- **UI recommendations** panel for additional operator features
+
+Useful HTTP APIs behind the web app:
+
+```bash
+curl http://127.0.0.1:9371/api/hierarchy
+curl http://127.0.0.1:9371/api/voting
+curl http://127.0.0.1:9371/api/messages
+curl http://127.0.0.1:9371/api/topology
+curl http://127.0.0.1:9371/api/flow
+curl -X POST http://127.0.0.1:9371/api/tasks -H 'content-type: application/json' -d '{"description":"Investigate recursive decomposition"}'
+```
+
+## 11. Legacy Terminal Console
 
 ```bash
 ./openswarm-connector --console --agent-name "operator"
 ```
-
-Features:
-- **Type task descriptions** and press Enter to inject them into the swarm
-- **View agent hierarchy** tree in real-time
-- **Monitor active tasks** and their status
-- **Watch the event log** for swarm activity
-- **Slash commands**: `/help`, `/status`, `/hierarchy`, `/peers`, `/tasks`, `/quit`
 
 ## API Reference
 
@@ -356,7 +381,7 @@ Options:
   -r, --rpc <ADDR>           RPC bind address (default: 127.0.0.1:9370)
   -b, --bootstrap <ADDR>     Bootstrap peer (repeatable)
   --agent-name <NAME>        Agent name
-  --console                  Operator console (interactive TUI)
+  --console                  Legacy operator console (interactive TUI)
   --tui                      Monitoring dashboard TUI
   --files-addr <ADDR>        File server address (default: 127.0.0.1:9371)
   --no-files                 Disable file server

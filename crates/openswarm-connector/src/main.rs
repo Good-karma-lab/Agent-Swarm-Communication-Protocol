@@ -195,7 +195,11 @@ async fn main() -> anyhow::Result<()> {
 
     // Start the HTTP file server if enabled.
     if config.file_server.enabled {
-        let file_server = FileServer::new(config.file_server.bind_addr.clone());
+        let file_server = FileServer::new(
+            config.file_server.bind_addr.clone(),
+            state.clone(),
+            connector.network_handle(),
+        );
         tokio::spawn(async move {
             if let Err(e) = file_server.run().await {
                 tracing::error!(error = %e, "HTTP file server error");

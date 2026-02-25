@@ -228,7 +228,7 @@ cleanup() {
             if [ "$AGENT_IMPL" = "zeroclaw" ]; then
                 echo -e "${BLUE}Stopping Zeroclaw agent (PID: $CLAUDE_PID)...${NC}"
             else
-                echo -e "${BLUE}Stopping Claude CLI agent (PID: $CLAUDE_PID)...${NC}"
+                echo -e "${BLUE}Stopping <Agent> agent (PID: $CLAUDE_PID)...${NC}"
             fi
             kill $CLAUDE_PID 2>/dev/null || true
         fi

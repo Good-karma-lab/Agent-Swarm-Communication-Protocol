@@ -374,6 +374,14 @@ impl RfpCoordinator {
         self.reveals.len()
     }
 
+    /// Debug view of committed hashes: (proposer, plan_hash).
+    pub fn commits_for_debug(&self) -> Vec<(String, String)> {
+        self.commits
+            .iter()
+            .map(|(agent, pending)| (agent.to_string(), pending.plan_hash.clone()))
+            .collect()
+    }
+
     /// Compute the commit hash for a plan (for use by proposers).
     pub fn compute_plan_hash(plan: &Plan) -> Result<String, ConsensusError> {
         let plan_json = serde_json::to_vec(plan)

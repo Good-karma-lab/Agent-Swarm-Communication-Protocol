@@ -54,6 +54,19 @@ pub struct TaskTimelineEvent {
     pub actor: Option<String>,
 }
 
+/// Debug trace record for peer-to-peer traffic.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MessageTraceEvent {
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub direction: String,
+    pub peer: Option<String>,
+    pub topic: String,
+    pub method: Option<String>,
+    pub task_id: Option<String>,
+    pub size_bytes: usize,
+    pub outcome: String,
+}
+
 /// Status of the connector.
 #[derive(Debug, Clone)]
 pub enum ConnectorStatus {
@@ -125,6 +138,8 @@ pub struct ConnectorState {
     pub network_stats: NetworkStats,
     /// Event log for the TUI.
     pub event_log: Vec<LogEntry>,
+    /// P2P message trace log for debugging and web dashboard.
+    pub message_trace: Vec<MessageTraceEvent>,
     /// Timestamp when the connector started.
     pub start_time: chrono::DateTime<chrono::Utc>,
     /// The swarm ID this connector is currently a member of.
@@ -146,6 +161,13 @@ impl ConnectorState {
             category,
             message,
         });
+    }
+
+    pub fn push_message_trace(&mut self, event: MessageTraceEvent) {
+        if self.message_trace.len() >= 5000 {
+            self.message_trace.remove(0);
+        }
+        self.message_trace.push(event);
     }
 
     pub fn push_task_timeline_event(
@@ -345,6 +367,7 @@ impl OpenSwarmConnector {
                 parent_id: None,
             },
             event_log: Vec::new(),
+            message_trace: Vec::new(),
             start_time: chrono::Utc::now(),
             current_swarm_id,
             known_swarms,
@@ -465,6 +488,20 @@ impl OpenSwarmConnector {
             NetworkEvent::MessageReceived { topic, data, source, .. } => {
                 {
                     let mut state = self.state.write().await;
+                    let decoded = serde_json::from_slice::<SwarmMessage>(&data).ok();
+                    let task_id = decoded
+                        .as_ref()
+                        .and_then(|m| m.params.get("task_id").and_then(|v| v.as_str()).map(|s| s.to_string()));
+                    state.push_message_trace(MessageTraceEvent {
+                        timestamp: chrono::Utc::now(),
+                        direction: "inbound".to_string(),
+                        peer: Some(source.to_string()),
+                        topic: topic.clone(),
+                        method: decoded.as_ref().map(|m| m.method.clone()),
+                        task_id,
+                        size_bytes: data.len(),
+                        outcome: "received".to_string(),
+                    });
                     state.push_log(
                         LogCategory::Message,
                         format!("Message received on {} from {}", topic, source),
@@ -504,7 +541,7 @@ impl OpenSwarmConnector {
         &self,
         topic: &str,
         data: &[u8],
-        _source: openswarm_network::PeerId,
+        source: openswarm_network::PeerId,
     ) {
         let message: SwarmMessage = match serde_json::from_slice(data) {
             Ok(m) => m,
@@ -515,6 +552,16 @@ impl OpenSwarmConnector {
                     LogCategory::Error,
                     format!("Failed to parse message on {}: {}", topic, e),
                 );
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "inbound".to_string(),
+                    peer: Some(source.to_string()),
+                    topic: topic.to_string(),
+                    method: None,
+                    task_id: None,
+                    size_bytes: data.len(),
+                    outcome: "parse_error".to_string(),
+                });
                 return;
             }
         };
@@ -1009,12 +1056,58 @@ impl OpenSwarmConnector {
             let discovery_topic = SwarmTopics::swarm_discovery();
             if let Err(e) = self.network_handle.publish(&discovery_topic, data.clone()).await {
                 tracing::debug!(error = %e, "Failed to publish swarm announcement to discovery topic");
+                let mut state = self.state.write().await;
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "outbound".to_string(),
+                    peer: None,
+                    topic: discovery_topic.clone(),
+                    method: Some(ProtocolMethod::SwarmAnnounce.as_str().to_string()),
+                    task_id: None,
+                    size_bytes: data.len(),
+                    outcome: format!("error: {}", e),
+                });
+            } else {
+                let mut state = self.state.write().await;
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "outbound".to_string(),
+                    peer: None,
+                    topic: discovery_topic.clone(),
+                    method: Some(ProtocolMethod::SwarmAnnounce.as_str().to_string()),
+                    task_id: None,
+                    size_bytes: data.len(),
+                    outcome: "published".to_string(),
+                });
             }
 
             // Publish to the swarm-specific announcement topic.
             let announce_topic = SwarmTopics::swarm_announce(params.swarm_id.as_str());
             if let Err(e) = self.network_handle.publish(&announce_topic, data).await {
                 tracing::debug!(error = %e, "Failed to publish swarm announcement to swarm topic");
+                let mut state = self.state.write().await;
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "outbound".to_string(),
+                    peer: None,
+                    topic: announce_topic,
+                    method: Some(ProtocolMethod::SwarmAnnounce.as_str().to_string()),
+                    task_id: None,
+                    size_bytes: 0,
+                    outcome: format!("error: {}", e),
+                });
+            } else {
+                let mut state = self.state.write().await;
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "outbound".to_string(),
+                    peer: None,
+                    topic: announce_topic,
+                    method: Some(ProtocolMethod::SwarmAnnounce.as_str().to_string()),
+                    task_id: None,
+                    size_bytes: 0,
+                    outcome: "published".to_string(),
+                });
             }
         }
 
@@ -1063,6 +1156,29 @@ impl OpenSwarmConnector {
             let topic = SwarmTopics::keepalive_for(swarm_id.as_str());
             if let Err(e) = self.network_handle.publish(&topic, data).await {
                 tracing::debug!(error = %e, "Failed to send keepalive");
+                let mut state = self.state.write().await;
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "outbound".to_string(),
+                    peer: None,
+                    topic,
+                    method: Some(ProtocolMethod::KeepAlive.as_str().to_string()),
+                    task_id: None,
+                    size_bytes: 0,
+                    outcome: format!("error: {}", e),
+                });
+            } else {
+                let mut state = self.state.write().await;
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "outbound".to_string(),
+                    peer: None,
+                    topic,
+                    method: Some(ProtocolMethod::KeepAlive.as_str().to_string()),
+                    task_id: None,
+                    size_bytes: 0,
+                    outcome: "published".to_string(),
+                });
             }
         }
     }
@@ -1344,6 +1460,29 @@ impl OpenSwarmConnector {
                     error = %e,
                     "Failed to publish task assignment"
                 );
+                let mut state = self.state.write().await;
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "outbound".to_string(),
+                    peer: None,
+                    topic,
+                    method: Some(ProtocolMethod::TaskAssignment.as_str().to_string()),
+                    task_id: Some(task_id.to_string()),
+                    size_bytes: 0,
+                    outcome: format!("error: {}", e),
+                });
+            } else {
+                let mut state = self.state.write().await;
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "outbound".to_string(),
+                    peer: None,
+                    topic,
+                    method: Some(ProtocolMethod::TaskAssignment.as_str().to_string()),
+                    task_id: Some(task_id.to_string()),
+                    size_bytes: 0,
+                    outcome: "published".to_string(),
+                });
             }
         }
 

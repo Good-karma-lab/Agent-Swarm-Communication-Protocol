@@ -15,6 +15,14 @@ This directory contains process-level E2E coverage for the connector, console, n
   - Operator console command flow
   - Console task injection propagation to another node
 
+- `webapp_e2e.sh`
+  - Web dashboard API coverage (`/api/hierarchy`, `/api/voting`, `/api/messages`, `/api/topology`, `/api/flow`)
+  - Task submission via HTTP (`POST /api/tasks`) and task timeline lookup
+
+- `playwright_ui_e2e.sh`
+  - Headless browser E2E for React web dashboard
+  - Validates rendering, task submit interaction, and topology tab
+
 - `zeroclaw_openrouter_live.sh` (opt-in)
   - Full live flow with ZeroClaw + OpenRouter (`minimax/minimax-m2.5` by default)
   - Requires `OPENROUTER_API_KEY`
@@ -24,6 +32,7 @@ This directory contains process-level E2E coverage for the connector, console, n
   - Runs live suite only if `E2E_LIVE_LLM=1`
   - Runs fault-injection suite only if `E2E_FAULT=1`
   - Runs soak suite only if `E2E_SOAK=1`
+  - Runs Playwright UI suite only if `E2E_PLAYWRIGHT=1`
 
 - `observability_ui.sh`
   - Operator console/TUI observability smoke coverage
@@ -62,6 +71,7 @@ Optional suites:
 ```bash
 export E2E_FAULT=1
 export E2E_SOAK=1
+export E2E_PLAYWRIGHT=1
 bash tests/e2e/run_all.sh
 ```
 
