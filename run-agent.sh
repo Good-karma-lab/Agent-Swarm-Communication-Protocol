@@ -14,10 +14,10 @@ if [ -f "openswarm.conf" ]; then
 fi
 
 # Agent implementation: claude-code-cli (default) or zeroclaw
-AGENT_IMPL=${AGENT_IMPL:-claude-code-cli}
-LLM_BACKEND=${LLM_BACKEND:-ollama}
+AGENT_IMPL=${AGENT_IMPL:-zeroclaw}
+LLM_BACKEND=${LLM_BACKEND:-openrouter}
 LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-./models/gpt-oss-20b.gguf}
-MODEL_NAME=${MODEL_NAME:-gpt-oss:20b}
+MODEL_NAME=${MODEL_NAME:-arcee-ai/trinity-large-preview:free}
 ZEROCLAW_AUTO_UPDATE=${ZEROCLAW_AUTO_UPDATE:-true}
 
 # Colors for output
@@ -153,6 +153,16 @@ if [ "$AGENT_IMPL" = "zeroclaw" ] && [ "$ZEROCLAW_AUTO_UPDATE" = "true" ]; then
         echo -e "${BLUE}Updating Zeroclaw to latest version...${NC}"
         ./scripts/update-zeroclaw.sh || {
             echo -e "${YELLOW}Warning: Zeroclaw update failed, continuing with installed version.${NC}"
+        }
+    fi
+fi
+
+if [ "$AGENT_IMPL" = "zeroclaw" ] && [ "$LLM_BACKEND" = "ollama" ]; then
+    if [ -x "./scripts/setup-local-llm.sh" ]; then
+        echo -e "${BLUE}Ensuring local Ollama model server is running...${NC}"
+        ./scripts/setup-local-llm.sh start >/dev/null || {
+            echo -e "${RED}Failed to start local model server via scripts/setup-local-llm.sh${NC}"
+            exit 1
         }
     fi
 fi

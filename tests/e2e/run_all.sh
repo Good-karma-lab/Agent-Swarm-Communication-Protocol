@@ -20,4 +20,18 @@ else
     echo "[e2e] Skipping live LLM test (set E2E_LIVE_LLM=1 to enable)"
 fi
 
+if [[ "${E2E_FAULT:-0}" == "1" ]]; then
+    echo "[e2e] Running fault-injection E2E"
+    bash "$SCRIPT_DIR/fault_injection.sh"
+else
+    echo "[e2e] Skipping fault-injection test (set E2E_FAULT=1 to enable)"
+fi
+
+if [[ "${E2E_SOAK:-0}" == "1" ]]; then
+    echo "[e2e] Running soak E2E"
+    bash "$SCRIPT_DIR/soak.sh"
+else
+    echo "[e2e] Skipping soak test (set E2E_SOAK=1 to enable)"
+fi
+
 echo "[e2e] All selected tests passed"

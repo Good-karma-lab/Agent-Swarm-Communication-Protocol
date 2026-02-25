@@ -57,6 +57,22 @@ struct ConsoleSnapshot {
     hierarchy: Vec<HierarchyNode>,
     event_log: Vec<LogEntry>,
     current_swarm_name: String,
+    flow: FlowSnapshot,
+}
+
+#[derive(Debug, Clone, Default)]
+struct FlowSnapshot {
+    injected: usize,
+    proposed: usize,
+    commits: usize,
+    reveals: usize,
+    votes: usize,
+    selected: usize,
+    subtasks: usize,
+    assigned: usize,
+    results: usize,
+    message_events: usize,
+    peer_events: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -131,6 +147,7 @@ impl OperatorConsole {
 
         // Build hierarchy from known agents.
         let hierarchy = build_hierarchy_tree(&state);
+        let flow = summarize_flow_snapshot(&state);
 
         ConsoleSnapshot {
             agent_id: state.agent_id.to_string(),
@@ -171,6 +188,7 @@ impl OperatorConsole {
             hierarchy,
             event_log: state.event_log.clone(),
             current_swarm_name,
+            flow,
         }
     }
 
@@ -230,6 +248,18 @@ impl OperatorConsole {
                 );
                 self.add_message(
                     "  /tasks       - List active tasks",
+                    Color::White,
+                );
+                self.add_message(
+                    "  /timeline <task_id> - Show task lifecycle events",
+                    Color::White,
+                );
+                self.add_message(
+                    "  /votes [task_id] - Show voting engine status",
+                    Color::White,
+                );
+                self.add_message(
+                    "  /flow        - Show flow counters (votes/decompose/results)",
                     Color::White,
                 );
                 self.add_message(
@@ -350,6 +380,89 @@ impl OperatorConsole {
                         print_hierarchy_node(node, "", true, &mut self.console_messages);
                     }
                 }
+            }
+            "/timeline" => {
+                let task_id = parts.get(1).copied().unwrap_or("").trim();
+                if task_id.is_empty() {
+                    self.add_message("Usage: /timeline <task_id>", Color::Yellow);
+                } else {
+                    let timeline = {
+                        let state = self.state.read().await;
+                        state.task_timelines.get(task_id).cloned().unwrap_or_default()
+                    };
+                    if timeline.is_empty() {
+                        self.add_message(&format!("No timeline for task {}", task_id), Color::Yellow);
+                    } else {
+                        self.add_message(&format!("Timeline for {}:", task_id), Color::Cyan);
+                        for event in timeline.iter().rev().take(20).rev() {
+                            self.add_message(
+                                &format!(
+                                    "  {} {} {}",
+                                    event.timestamp.format("%H:%M:%S"),
+                                    event.stage,
+                                    event.detail
+                                ),
+                                Color::White,
+                            );
+                        }
+                    }
+                }
+            }
+            "/votes" => {
+                let selected = parts.get(1).copied().unwrap_or("").trim().to_string();
+                let rows = {
+                    let state = self.state.read().await;
+                    state
+                        .voting_engines
+                        .iter()
+                        .filter(|(task_id, _)| selected.is_empty() || selected == **task_id)
+                        .map(|(task_id, voting)| {
+                            (
+                                task_id.clone(),
+                                voting.proposal_count(),
+                                voting.ballot_count(),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                };
+                if rows.is_empty() {
+                    self.add_message("No active voting engines.", Color::Yellow);
+                } else {
+                    self.add_message("Voting state:", Color::Cyan);
+                    for (task, proposals, ballots) in rows {
+                        self.add_message(
+                            &format!(
+                                "  task={} proposals={} ballots={} quorum={}",
+                                task,
+                                proposals,
+                                ballots,
+                                ballots >= proposals && ballots > 0
+                            ),
+                            Color::White,
+                        );
+                    }
+                }
+            }
+            "/flow" => {
+                let flow = {
+                    let state = self.state.read().await;
+                    summarize_flow_snapshot(&state)
+                };
+                self.add_message(
+                    &format!(
+                        "Flow: inj={} prop={} commit={} reveal={} vote={} sel={} sub={} asg={} res={}",
+                        flow.injected,
+                        flow.proposed,
+                        flow.commits,
+                        flow.reveals,
+                        flow.votes,
+                        flow.selected,
+                        flow.subtasks,
+                        flow.assigned,
+                        flow.results
+                    ),
+                    Color::Cyan,
+                );
             }
             "/quit" | "/exit" | "/q" => {
                 // Handled in the event loop.
@@ -504,12 +617,54 @@ impl OperatorConsole {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(8),  // Tasks
-                Constraint::Min(4),    // Console output / Event log
+                Constraint::Length(7),  // Flow
+                Constraint::Min(4),     // Console output / Event log
             ])
             .split(columns[1]);
 
         self.render_tasks(frame, right_column[0], snap);
-        self.render_console_output(frame, right_column[1]);
+        self.render_flow(frame, right_column[1], snap);
+        self.render_console_output(frame, right_column[2]);
+    }
+
+    fn render_flow(&self, frame: &mut Frame, area: Rect, snap: &ConsoleSnapshot) {
+        let block = Block::default()
+            .title(" Process Flow ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::LightBlue));
+
+        let f = &snap.flow;
+        let text = vec![
+            Line::from(vec![
+                Span::styled("  Tasks: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    format!(
+                        "inj={} prop={} sel={} sub={} res={}",
+                        f.injected, f.proposed, f.selected, f.subtasks, f.results
+                    ),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  Votes: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    format!("commit={} reveal={} vote={}", f.commits, f.reveals, f.votes),
+                    Style::default().fg(Color::Green),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  Assign/P2P: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    format!(
+                        "asg={} msg={} peer={}",
+                        f.assigned, f.message_events, f.peer_events
+                    ),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+        ];
+
+        frame.render_widget(Paragraph::new(text).block(block), area);
     }
 
     /// Render the agent hierarchy tree panel.
@@ -801,28 +956,96 @@ impl OperatorConsole {
 
 /// Build a hierarchy tree from the connector state.
 fn build_hierarchy_tree(state: &ConnectorState) -> Vec<HierarchyNode> {
-    state
-        .member_set
-        .elements()
-        .into_iter()
-        .map(|agent_id| {
-            let last_seen_secs = state.member_last_seen.get(&agent_id).map(|ts| {
-                chrono::Utc::now()
-                    .signed_duration_since(*ts)
-                    .num_seconds()
-                    .max(0)
+    let mut nodes: std::collections::HashMap<String, HierarchyNode> = std::collections::HashMap::new();
+    for agent_id in state.active_member_ids(Duration::from_secs(180)) {
+        let last_seen_secs = state.member_last_seen.get(&agent_id).map(|ts| {
+            chrono::Utc::now()
+                .signed_duration_since(*ts)
+                .num_seconds()
+                .max(0)
+        });
+        let tier = state
+            .agent_tiers
+            .get(&agent_id)
+            .map(format_tier)
+            .unwrap_or_else(|| {
+                if agent_id == state.agent_id.to_string() {
+                    format_tier(&state.my_tier)
+                } else {
+                    "Peer".to_string()
+                }
             });
+        let task_count = state
+            .task_details
+            .values()
+            .filter(|task| task.assigned_to.as_ref().map(|a| a.to_string()) == Some(agent_id.clone()))
+            .count();
+
+        nodes.insert(
+            agent_id.clone(),
             HierarchyNode {
                 display_name: truncate_agent_id(&agent_id),
-                agent_id,
-                tier: "Agent".to_string(),
-                is_self: false,
+                agent_id: agent_id.clone(),
+                tier,
+                is_self: agent_id == state.agent_id.to_string(),
                 children: Vec::new(),
-                task_count: 0,
+                task_count,
                 last_seen_secs,
+            },
+        );
+    }
+
+    let mut roots: Vec<String> = Vec::new();
+    let keys: Vec<String> = nodes.keys().cloned().collect();
+    for agent_id in keys {
+        if let Some(parent) = state.agent_parents.get(&agent_id) {
+            if nodes.contains_key(parent) {
+                let child = nodes.get(&agent_id).cloned();
+                if let (Some(parent_node), Some(child_node)) = (nodes.get_mut(parent), child) {
+                    parent_node.children.push(child_node);
+                }
+                continue;
             }
-        })
+        }
+        roots.push(agent_id);
+    }
+
+    roots.sort();
+    roots
+        .into_iter()
+        .filter_map(|id| nodes.get(&id).cloned())
         .collect()
+}
+
+fn summarize_flow_snapshot(state: &ConnectorState) -> FlowSnapshot {
+    let mut flow = FlowSnapshot::default();
+
+    for events in state.task_timelines.values() {
+        for event in events {
+            match event.stage.as_str() {
+                "injected" => flow.injected += 1,
+                "proposed" => flow.proposed += 1,
+                "proposal_commit" => flow.commits += 1,
+                "proposal_reveal" => flow.reveals += 1,
+                "vote_recorded" => flow.votes += 1,
+                "plan_selected" => flow.selected += 1,
+                "subtask_created" => flow.subtasks += 1,
+                "subtask_assigned" | "assigned" => flow.assigned += 1,
+                "result_submitted" => flow.results += 1,
+                _ => {}
+            }
+        }
+    }
+
+    for entry in state.event_log.iter().rev().take(200) {
+        match entry.category {
+            LogCategory::Message => flow.message_events += 1,
+            LogCategory::Peer => flow.peer_events += 1,
+            _ => {}
+        }
+    }
+
+    flow
 }
 
 /// Render hierarchy tree into display lines.
@@ -843,6 +1066,8 @@ fn render_hierarchy_lines(
     let tier_color = match node.tier.as_str() {
         "Tier1" => Color::Red,
         "Tier2" => Color::Yellow,
+        t if t.starts_with("Tier") => Color::LightYellow,
+        "Executor" => Color::Green,
         "Agent" => Color::Cyan,
         "Peer" => Color::Cyan,
         _ => Color::White,
@@ -1132,10 +1357,87 @@ mod tests {
         state.mark_member_seen("did:swarm:agent-2");
 
         let tree = build_hierarchy_tree(&state);
-        assert_eq!(tree.len(), 2);
-        assert!(tree.iter().all(|n| n.tier == "Agent"));
-        assert!(tree.iter().all(|n| !n.is_self));
-        assert!(tree.iter().all(|n| n.last_seen_secs.is_some()));
+        assert_eq!(tree.len(), 3);
+        assert!(tree.iter().any(|n| n.is_self));
+        assert!(tree
+            .iter()
+            .filter(|n| !n.is_self)
+            .all(|n| n.last_seen_secs.is_some()));
+    }
+
+    #[test]
+    fn flow_summary_counts_votes_decomposition_results() {
+        use openswarm_hierarchy::{EpochManager, GeoCluster, PyramidAllocator, SuccessionManager};
+        use openswarm_protocol::{AgentId, SwarmId, Tier};
+        use openswarm_state::{ContentStore, GranularityAlgorithm, MerkleDag, OrSet};
+
+        let mut state = ConnectorState {
+            agent_id: AgentId::new("did:swarm:flow-test".to_string()),
+            status: ConnectorStatus::Running,
+            epoch_manager: EpochManager::default(),
+            pyramid: PyramidAllocator::default(),
+            election: None,
+            geo_cluster: GeoCluster::default(),
+            succession: SuccessionManager::new(),
+            rfp_coordinators: std::collections::HashMap::new(),
+            voting_engines: std::collections::HashMap::new(),
+            cascade: openswarm_consensus::CascadeEngine::new(),
+            task_set: OrSet::new("seed".to_string()),
+            task_details: std::collections::HashMap::new(),
+            task_timelines: std::collections::HashMap::new(),
+            agent_set: OrSet::new("seed".to_string()),
+            member_set: OrSet::new("seed".to_string()),
+            member_last_seen: std::collections::HashMap::new(),
+            merkle_dag: MerkleDag::new(),
+            content_store: ContentStore::new(),
+            granularity: GranularityAlgorithm::default(),
+            my_tier: Tier::Tier1,
+            parent_id: None,
+            agent_tiers: std::collections::HashMap::new(),
+            agent_parents: std::collections::HashMap::new(),
+            current_layout: None,
+            subordinates: std::collections::HashMap::new(),
+            task_results: std::collections::HashMap::new(),
+            network_stats: openswarm_protocol::NetworkStats {
+                total_agents: 1,
+                hierarchy_depth: 1,
+                branching_factor: 10,
+                current_epoch: 1,
+                my_tier: Tier::Tier1,
+                subordinate_count: 0,
+                parent_id: None,
+            },
+            event_log: Vec::new(),
+            start_time: chrono::Utc::now(),
+            current_swarm_id: SwarmId::new("public".to_string()),
+            known_swarms: std::collections::HashMap::new(),
+            swarm_token: None,
+        };
+
+        state.push_task_timeline_event("t1", "injected", "", None);
+        state.push_task_timeline_event("t1", "proposed", "", None);
+        state.push_task_timeline_event("t1", "proposal_commit", "", None);
+        state.push_task_timeline_event("t1", "proposal_reveal", "", None);
+        state.push_task_timeline_event("t1", "vote_recorded", "", None);
+        state.push_task_timeline_event("t1", "plan_selected", "", None);
+        state.push_task_timeline_event("t1", "subtask_created", "", None);
+        state.push_task_timeline_event("t1", "subtask_assigned", "", None);
+        state.push_task_timeline_event("t1", "result_submitted", "", None);
+        state.push_log(LogCategory::Message, "msg".to_string());
+        state.push_log(LogCategory::Peer, "peer".to_string());
+
+        let flow = summarize_flow_snapshot(&state);
+        assert_eq!(flow.injected, 1);
+        assert_eq!(flow.proposed, 1);
+        assert_eq!(flow.commits, 1);
+        assert_eq!(flow.reveals, 1);
+        assert_eq!(flow.votes, 1);
+        assert_eq!(flow.selected, 1);
+        assert_eq!(flow.subtasks, 1);
+        assert_eq!(flow.assigned, 1);
+        assert_eq!(flow.results, 1);
+        assert_eq!(flow.message_events, 1);
+        assert_eq!(flow.peer_events, 1);
     }
 
     #[tokio::test]

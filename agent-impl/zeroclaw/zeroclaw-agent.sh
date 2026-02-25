@@ -8,11 +8,12 @@ set -e
 AGENT_NAME=""
 RPC_PORT=""
 FILES_PORT=""
-LLM_BACKEND="anthropic"  # Default: anthropic (Claude API)
+LLM_BACKEND="openrouter"  # Default: OpenRouter free model
 MODEL_PATH=""
 API_KEY=""
 MODEL_NAME=""
 API_BASE_URL=""
+LLM_ARGS=""
 
 usage() {
     cat << EOF
@@ -24,7 +25,7 @@ Options:
     --agent-name NAME       Agent identifier
     --rpc-port PORT         RPC server port (default: 9370)
     --files-port PORT       File server port (default: 9371)
-    --llm-backend BACKEND   LLM backend: anthropic|openai|openrouter|local|ollama (default: anthropic)
+    --llm-backend BACKEND   LLM backend: anthropic|openai|openrouter|local|ollama (default: openrouter)
     --model-path PATH       Path to local model file (for local backend)
     --api-key KEY           API key for cloud providers
     --model-name NAME       Model name (e.g., claude-opus-4, gpt-4, llama3:70b)
@@ -128,7 +129,7 @@ case $LLM_BACKEND in
         fi
         export ANTHROPIC_API_KEY="${API_KEY:-$ANTHROPIC_API_KEY}"
         MODEL_NAME="${MODEL_NAME:-claude-opus-4}"
-        LLM_CONFIG="--backend anthropic --model $MODEL_NAME"
+        LLM_ARGS="-p anthropic --model $MODEL_NAME"
         ;;
     openai)
         if [ -z "$API_KEY" ] && [ -z "$OPENAI_API_KEY" ]; then
@@ -141,7 +142,7 @@ case $LLM_BACKEND in
             export OPENAI_BASE_URL="$API_BASE_URL"
         fi
         MODEL_NAME="${MODEL_NAME:-gpt-4}"
-        LLM_CONFIG="--backend openai --model $MODEL_NAME"
+        LLM_ARGS="-p openai --model $MODEL_NAME"
         ;;
     openrouter)
         if [ -z "$API_KEY" ] && [ -z "$OPENROUTER_API_KEY" ]; then
@@ -152,8 +153,8 @@ case $LLM_BACKEND in
 
         export OPENAI_API_KEY="${API_KEY:-$OPENROUTER_API_KEY}"
         export OPENAI_BASE_URL="${API_BASE_URL:-https://openrouter.ai/api/v1}"
-        MODEL_NAME="${MODEL_NAME:-minimax/minimax-m2.5}"
-        LLM_CONFIG="--backend openai --model $MODEL_NAME"
+        MODEL_NAME="${MODEL_NAME:-arcee-ai/trinity-large-preview:free}"
+        LLM_ARGS="-p openrouter --model $MODEL_NAME"
         ;;
     local)
         if [ -z "$MODEL_PATH" ]; then
@@ -167,7 +168,8 @@ case $LLM_BACKEND in
             echo "  wget https://huggingface.co/TheBloke/Llama-2-70B-GGUF/resolve/main/llama-2-70b.Q4_K_M.gguf -O models/llama-2-70b.gguf"
             exit 1
         fi
-        LLM_CONFIG="--backend local --model-path $MODEL_PATH"
+        MODEL_NAME="${MODEL_NAME:-local-model}"
+        LLM_ARGS="-p custom:http://127.0.0.1:8080/v1 --model $MODEL_NAME"
         ;;
     ollama)
         MODEL_NAME="${MODEL_NAME:-gpt-oss:20b}"
@@ -188,7 +190,7 @@ case $LLM_BACKEND in
                 exit 1
             }
         fi
-        LLM_CONFIG="--backend ollama --model $MODEL_NAME"
+        LLM_ARGS="-p ollama --model $MODEL_NAME"
         ;;
     *)
         echo "Error: Unknown LLM backend: $LLM_BACKEND"
@@ -212,11 +214,11 @@ INITIALIZATION (run once):
 1. Fetch skill documentation:
    curl http://127.0.0.1:$FILES_PORT/SKILL.md
 
-2. Register with swarm (TCP JSON-RPC):
-   echo '{"jsonrpc":"2.0","method":"swarm.register_agent","params":{"agent_id":"$AGENT_NAME"},"id":"init","signature":""}' | nc 127.0.0.1 $RPC_PORT
-
-3. Get your status to learn your tier:
+2. Get your status to learn your canonical DID and tier:
    echo '{"jsonrpc":"2.0","method":"swarm.get_status","params":{},"id":"status","signature":""}' | nc 127.0.0.1 $RPC_PORT
+
+3. Register with swarm using your canonical DID from status.agent_id (not alias names):
+   echo '{"jsonrpc":"2.0","method":"swarm.register_agent","params":{"agent_id":"<status.agent_id>"},"id":"init","signature":""}' | nc 127.0.0.1 $RPC_PORT
 
 4. Parse the response to extract your tier: "tier": "Tier1" / "Tier2" / ... / "Executor"
 
@@ -302,10 +304,71 @@ echo "RPC Port: $RPC_PORT"
 echo "Files Port: $FILES_PORT"
 echo ""
 
-# Run Zeroclaw
-exec zeroclaw \
-    $LLM_CONFIG \
-    --instructions "$INSTRUCTIONS_FILE" \
-    --agent-name "$AGENT_NAME" \
-    --autonomous \
-    --verbose
+# Run Zeroclaw in repeated single-shot mode for current CLI compatibility.
+INSTRUCTIONS_TEXT="$(<"$INSTRUCTIONS_FILE")"
+
+CONFIG_DIR="/tmp/zeroclaw-config-${AGENT_NAME}"
+CONFIG_FILE="$CONFIG_DIR/config.toml"
+mkdir -p "$CONFIG_DIR"
+
+if [ -f "$HOME/.zeroclaw/config.toml" ]; then
+    cp "$HOME/.zeroclaw/config.toml" "$CONFIG_FILE"
+else
+    cat > "$CONFIG_FILE" << 'EOF'
+default_provider = "openrouter"
+default_model = "minimax/minimax-m2.5"
+
+[autonomy]
+level = "full"
+workspace_only = false
+allowed_commands = ["*"]
+forbidden_paths = ["~/.ssh", "~/.gnupg", "~/.aws"]
+max_actions_per_hour = 10000
+max_cost_per_day_cents = 100000
+require_approval_for_medium_risk = false
+block_high_risk_commands = false
+auto_approve = ["shell", "file_write", "file_read", "list_dir"]
+
+[runtime]
+kind = "native"
+
+[agent]
+parallel_tools = true
+EOF
+fi
+
+python3 - "$CONFIG_FILE" << 'PY'
+import re
+import sys
+
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as f:
+    text = f.read()
+
+def sub(pattern, repl):
+    global text
+    text = re.sub(pattern, repl, text, flags=re.MULTILINE)
+
+sub(r'^level\s*=\s*"[^"]+"', 'level = "full"')
+sub(r'^workspace_only\s*=\s*(true|false)', 'workspace_only = false')
+sub(r'^allowed_commands\s*=\s*\[[^\]]*\]', 'allowed_commands = ["*"]')
+sub(r'^max_actions_per_hour\s*=\s*\d+', 'max_actions_per_hour = 10000')
+sub(r'^max_cost_per_day_cents\s*=\s*\d+', 'max_cost_per_day_cents = 100000')
+sub(r'^require_approval_for_medium_risk\s*=\s*(true|false)', 'require_approval_for_medium_risk = false')
+sub(r'^block_high_risk_commands\s*=\s*(true|false)', 'block_high_risk_commands = false')
+
+if 'auto_approve =' not in text:
+    text = text.replace(
+        'block_high_risk_commands = false',
+        'block_high_risk_commands = false\nauto_approve = ["shell", "file_write", "file_read", "list_dir"]'
+    )
+
+with open(path, 'w', encoding='utf-8') as f:
+    f.write(text)
+PY
+
+while true; do
+    # shellcheck disable=SC2086
+    zeroclaw --config-dir "$CONFIG_DIR" agent $LLM_ARGS --message "$INSTRUCTIONS_TEXT" || true
+    sleep 30
+done

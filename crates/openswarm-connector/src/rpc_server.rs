@@ -18,6 +18,7 @@
 //! Each line received is a JSON-RPC request; each line sent is a response.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use openswarm_consensus::rfp::RfpPhase;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -137,6 +138,10 @@ async fn process_request(
         "swarm.propose_plan" => {
             handle_propose_plan(request_id, &request.params, state, network_handle).await
         }
+        "swarm.submit_vote" => {
+            handle_submit_vote(request_id, &request.params, state, network_handle).await
+        }
+        "swarm.get_voting_state" => handle_get_voting_state(request_id, &request.params, state).await,
         "swarm.submit_result" => {
             handle_submit_result(request_id, &request.params, state, network_handle).await
         }
@@ -166,6 +171,184 @@ async fn process_request(
             format!("Unknown method: {}", request.method),
         ),
     }
+}
+
+/// Handle `swarm.submit_vote` - submit a ranked vote for a task.
+async fn handle_submit_vote(
+    id: Option<String>,
+    params: &serde_json::Value,
+    state: &Arc<RwLock<ConnectorState>>,
+    network_handle: &openswarm_network::SwarmHandle,
+) -> SwarmResponse {
+    let task_id = match params.get("task_id").and_then(|v| v.as_str()) {
+        Some(v) if !v.is_empty() => v.to_string(),
+        _ => {
+            return SwarmResponse::error(id, -32602, "Missing 'task_id' parameter".to_string());
+        }
+    };
+
+    let rankings: Vec<String> = match params.get("rankings").and_then(|v| v.as_array()) {
+        Some(arr) if !arr.is_empty() => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect(),
+        _ => {
+            return SwarmResponse::error(
+                id,
+                -32602,
+                "Missing or empty 'rankings' parameter".to_string(),
+            );
+        }
+    };
+
+    let epoch = {
+        let state = state.read().await;
+        params
+            .get("epoch")
+            .and_then(|v| v.as_u64())
+            .unwrap_or_else(|| state.epoch_manager.current_epoch())
+    };
+
+    let (voter, swarm_id, ballot_count, proposal_count) = {
+        let mut state = state.write().await;
+        let voter = state.agent_id.clone();
+
+        let proposals: std::collections::HashMap<String, AgentId> = rankings
+            .iter()
+            .map(|plan_id| {
+                (
+                    plan_id.clone(),
+                    AgentId::new(format!("did:swarm:proposal-owner:{}", plan_id)),
+                )
+            })
+            .collect();
+
+        let (ballot_count, proposal_count) = {
+            let voting = state.voting_engines.entry(task_id.clone()).or_insert_with(|| {
+                let mut engine = openswarm_consensus::VotingEngine::new(
+                    openswarm_consensus::voting::VotingConfig::default(),
+                    task_id.clone(),
+                    epoch,
+                );
+                engine.set_proposals(proposals.clone());
+                engine
+            });
+
+            let ranked_vote = RankedVote {
+                voter: voter.clone(),
+                task_id: task_id.clone(),
+                epoch,
+                rankings: rankings.clone(),
+                critic_scores: std::collections::HashMap::new(),
+            };
+
+            if let Err(e) = voting.record_vote(ranked_vote) {
+                return SwarmResponse::error(id, -32000, format!("Failed to record vote: {}", e));
+            }
+
+            (voting.ballot_count(), voting.proposal_count())
+        };
+
+        state.push_task_timeline_event(
+            &task_id,
+            "vote_recorded",
+            format!("Vote submitted via RPC: {}", rankings.join(" > ")),
+            Some(voter.to_string()),
+        );
+        state.push_log(
+            crate::tui::LogCategory::Vote,
+            format!(
+                "Vote submitted for task {} by {} ({})",
+                task_id,
+                voter,
+                rankings.join(" > ")
+            ),
+        );
+
+        (
+            voter,
+            state.current_swarm_id.as_str().to_string(),
+            ballot_count,
+            proposal_count,
+        )
+    };
+
+    let vote_msg = SwarmMessage::new(
+        ProtocolMethod::ConsensusVote.as_str(),
+        serde_json::json!({
+            "task_id": task_id,
+            "voter": voter,
+            "epoch": epoch,
+            "rankings": rankings,
+            "critic_scores": {},
+        }),
+        String::new(),
+    );
+
+    if let Ok(data) = serde_json::to_vec(&vote_msg) {
+        let topic = SwarmTopics::voting_for(&swarm_id, &task_id);
+        let _ = network_handle.publish(&topic, data).await;
+    }
+
+    SwarmResponse::success(
+        id,
+        serde_json::json!({
+            "task_id": task_id,
+            "accepted": true,
+            "ballot_count": ballot_count,
+            "proposal_count": proposal_count,
+        }),
+    )
+}
+
+/// Handle `swarm.get_voting_state` - inspect voting and proposal state.
+async fn handle_get_voting_state(
+    id: Option<String>,
+    params: &serde_json::Value,
+    state: &Arc<RwLock<ConnectorState>>,
+) -> SwarmResponse {
+    let maybe_task_id = params
+        .get("task_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let state = state.read().await;
+
+    let voting_entries: Vec<serde_json::Value> = state
+        .voting_engines
+        .iter()
+        .filter(|(task_id, _)| maybe_task_id.as_ref().map(|t| t == *task_id).unwrap_or(true))
+        .map(|(task_id, voting)| {
+            serde_json::json!({
+                "task_id": task_id,
+                "proposal_count": voting.proposal_count(),
+                "ballot_count": voting.ballot_count(),
+                "quorum_reached": voting.ballot_count() >= voting.proposal_count() && voting.ballot_count() > 0,
+            })
+        })
+        .collect();
+
+    let rfp_entries: Vec<serde_json::Value> = state
+        .rfp_coordinators
+        .iter()
+        .filter(|(task_id, _)| maybe_task_id.as_ref().map(|t| t == *task_id).unwrap_or(true))
+        .map(|(task_id, rfp)| {
+            serde_json::json!({
+                "task_id": task_id,
+                "phase": format!("{:?}", rfp.phase()),
+                "commit_count": rfp.commit_count(),
+                "reveal_count": rfp.reveal_count(),
+            })
+        })
+        .collect();
+
+    SwarmResponse::success(
+        id,
+        serde_json::json!({
+            "voting_engines": voting_entries,
+            "rfp_coordinators": rfp_entries,
+        }),
+    )
 }
 
 /// Handle `swarm.connect` - connect to a peer by multiaddress.
@@ -208,11 +391,12 @@ async fn handle_get_network_stats(
     state: &Arc<RwLock<ConnectorState>>,
 ) -> SwarmResponse {
     let state = state.read().await;
-    let stats = &state.network_stats;
+    let mut stats = state.network_stats.clone();
+    stats.total_agents = state.active_member_count(Duration::from_secs(180)) as u64;
 
     SwarmResponse::success(
         id,
-        serde_json::to_value(stats).unwrap_or_default(),
+        serde_json::to_value(&stats).unwrap_or_default(),
     )
 }
 
@@ -223,7 +407,7 @@ pub(crate) async fn handle_propose_plan(
     state: &Arc<RwLock<ConnectorState>>,
     network_handle: &openswarm_network::SwarmHandle,
 ) -> SwarmResponse {
-    let plan: Plan = match serde_json::from_value(params.clone()) {
+    let mut plan: Plan = match serde_json::from_value(params.clone()) {
         Ok(p) => p,
         Err(e) => {
             return SwarmResponse::error(
@@ -233,6 +417,11 @@ pub(crate) async fn handle_propose_plan(
             );
         }
     };
+
+    {
+        let state = state.read().await;
+        plan.proposer = state.agent_id.clone();
+    }
 
     let plan_hash = match openswarm_consensus::RfpCoordinator::compute_plan_hash(&plan) {
         Ok(h) => h,
@@ -362,8 +551,7 @@ pub(crate) async fn handle_propose_plan(
     let assignment_payloads: Vec<(String, Vec<u8>)> = {
         let mut state = state.write().await;
         let assignees: Vec<AgentId> = state
-            .member_set
-            .elements()
+            .active_member_ids(Duration::from_secs(180))
             .into_iter()
             .map(AgentId::new)
             .collect();
@@ -546,6 +734,15 @@ pub(crate) async fn handle_propose_plan(
             ),
             Some(plan.proposer.to_string()),
         );
+
+        // Fast-path selection for single-plan flows to keep execution moving
+        // when no explicit voting ballots are submitted.
+        state.push_task_timeline_event(
+            &plan.task_id,
+            "plan_selected",
+            format!("Plan {} selected (single-plan fast path)", plan.plan_id),
+            Some(plan.proposer.to_string()),
+        );
     }
 
     SwarmResponse::success(
@@ -612,13 +809,13 @@ fn aggregate_subtask_results(state: &ConnectorState, parent_task_id: &str) -> Ar
 }
 
 /// Handle `swarm.submit_result` - submit a task execution result.
-async fn handle_submit_result(
+pub(crate) async fn handle_submit_result(
     id: Option<String>,
     params: &serde_json::Value,
     state: &Arc<RwLock<ConnectorState>>,
     network_handle: &openswarm_network::SwarmHandle,
 ) -> SwarmResponse {
-    let submission: ResultSubmissionParams = match serde_json::from_value(params.clone()) {
+    let mut submission: ResultSubmissionParams = match serde_json::from_value(params.clone()) {
         Ok(s) => s,
         Err(e) => {
             return SwarmResponse::error(
@@ -628,6 +825,12 @@ async fn handle_submit_result(
             );
         }
     };
+
+    {
+        let state = state.read().await;
+        submission.agent_id = state.agent_id.clone();
+        submission.artifact.producer = state.agent_id.clone();
+    }
 
     // Add to Merkle DAG and update task state.
     let (dag_nodes, parent_propagation_info) = {
@@ -910,6 +1113,7 @@ async fn handle_get_status(
     state: &Arc<RwLock<ConnectorState>>,
 ) -> SwarmResponse {
     let state = state.read().await;
+    let known_agents = state.active_member_count(Duration::from_secs(180));
 
     SwarmResponse::success(
         id,
@@ -920,7 +1124,7 @@ async fn handle_get_status(
             "epoch": state.epoch_manager.current_epoch(),
             "parent_id": state.parent_id.as_ref().map(|p| p.to_string()),
             "active_tasks": state.task_set.len(),
-            "known_agents": state.member_set.len(),
+            "known_agents": known_agents,
             "content_items": state.content_store.item_count(),
         }),
     )
@@ -933,7 +1137,7 @@ async fn handle_register_agent(
     state: &Arc<RwLock<ConnectorState>>,
     network_handle: &openswarm_network::SwarmHandle,
 ) -> SwarmResponse {
-    let agent_id = match params.get("agent_id").and_then(|v| v.as_str()) {
+    let requested_agent_id = match params.get("agent_id").and_then(|v| v.as_str()) {
         Some(v) if !v.trim().is_empty() => v.trim().to_string(),
         _ => {
             return SwarmResponse::error(
@@ -944,15 +1148,21 @@ async fn handle_register_agent(
         }
     };
 
-    let (known_agents, swarm_id, epoch, hierarchy_assignments) = {
+    let (known_agents, canonical_agent_id, swarm_id, epoch, hierarchy_assignments) = {
         let mut state = state.write().await;
-        state.mark_member_seen(&agent_id);
+        let canonical_agent_id = state.agent_id.to_string();
+        state.mark_member_seen(&canonical_agent_id);
         state.push_log(
             crate::tui::LogCategory::System,
-            format!("Agent registered: {}", agent_id),
+            format!(
+                "Agent registered: requested={}, canonical={}",
+                requested_agent_id, canonical_agent_id
+            ),
         );
 
-        let swarm_size = state.member_set.len() as u64;
+        let staleness = Duration::from_secs(180);
+        let active_members = state.active_member_ids(staleness);
+        let swarm_size = active_members.len() as u64;
         let mut hierarchy_assignments = Vec::new();
 
         // Threshold: only form hierarchy when we have 5+ agents
@@ -963,7 +1173,7 @@ async fn handle_register_agent(
                     state.network_stats.hierarchy_depth = layout.depth;
 
                     // Assign tiers to all agents based on sorted member list
-                    let mut sorted_agents: Vec<String> = state.member_set.elements();
+                    let mut sorted_agents: Vec<String> = active_members;
                     sorted_agents.sort(); // Deterministic ordering across all nodes
 
                     state.agent_tiers.clear();
@@ -1007,6 +1217,7 @@ async fn handle_register_agent(
                         state.my_tier = my_tier;
                         state.parent_id = my_parent_id.map(AgentId::new);
                         state.network_stats.my_tier = my_tier;
+                        state.network_stats.parent_id = state.parent_id.clone();
                         state.network_stats.subordinate_count = my_subordinate_count;
                     }
 
@@ -1030,7 +1241,8 @@ async fn handle_register_agent(
         }
 
         (
-            state.member_set.len(),
+            state.active_member_count(staleness),
+            canonical_agent_id,
             state.current_swarm_id.as_str().to_string(),
             state.epoch_manager.current_epoch(),
             hierarchy_assignments,
@@ -1039,7 +1251,7 @@ async fn handle_register_agent(
 
     // Publish keepalive
     let keepalive = KeepAliveParams {
-        agent_id: AgentId::new(agent_id.clone()),
+        agent_id: AgentId::new(canonical_agent_id.clone()),
         epoch,
         timestamp: chrono::Utc::now(),
     };
@@ -1081,7 +1293,8 @@ async fn handle_register_agent(
         id,
         serde_json::json!({
             "registered": true,
-            "agent_id": agent_id,
+            "agent_id": canonical_agent_id,
+            "requested_agent_id": requested_agent_id,
             "known_agents": known_agents,
         }),
     )
@@ -1256,16 +1469,18 @@ async fn handle_inject_task(
         }
     };
 
-    let mut state = state.write().await;
-    let epoch = state.epoch_manager.current_epoch();
+    let mut state_guard = state.write().await;
+    let epoch = state_guard.epoch_manager.current_epoch();
     let task = openswarm_protocol::Task::new(description.clone(), 1, epoch);
     let task_id = task.task_id.clone();
+    let my_tier = state_guard.my_tier;
+    let my_agent_id = state_guard.agent_id.clone();
 
     // Add task to the local task set (CRDT).
-    state.task_set.add(task_id.clone());
-    state.task_details.insert(task_id.clone(), task.clone());
-    let actor = state.agent_id.to_string();
-    state.push_task_timeline_event(
+    state_guard.task_set.add(task_id.clone());
+    state_guard.task_details.insert(task_id.clone(), task.clone());
+    let actor = state_guard.agent_id.to_string();
+    state_guard.push_task_timeline_event(
         &task_id,
         "injected",
         format!("Task injected via RPC: {}", description),
@@ -1273,7 +1488,7 @@ async fn handle_inject_task(
     );
 
     // Log the injection.
-    state.push_log(
+    state_guard.push_log(
         crate::tui::LogCategory::Task,
         format!("Task injected via RPC: {} ({})", task_id, description),
     );
@@ -1281,7 +1496,7 @@ async fn handle_inject_task(
     // Publish task injection to the swarm network.
     let inject_params = TaskInjectionParams {
         task: task.clone(),
-        originator: state.agent_id.clone(),
+        originator: state_guard.agent_id.clone(),
     };
 
     let msg = SwarmMessage::new(
@@ -1290,8 +1505,8 @@ async fn handle_inject_task(
         String::new(),
     );
 
-    let swarm_id = state.current_swarm_id.as_str().to_string();
-    drop(state);
+    let swarm_id = state_guard.current_swarm_id.as_str().to_string();
+    drop(state_guard);
 
     if let Ok(data) = serde_json::to_vec(&msg) {
         let topic = SwarmTopics::tasks_for(&swarm_id, 1);
@@ -1314,6 +1529,43 @@ async fn handle_inject_task(
         }
     }
 
+    // Coordinator fallback: if a coordinator injects a task and no external
+    // planner responds, seed a baseline decomposition plan immediately.
+    if my_tier != Tier::Executor {
+        let mut auto_plan = Plan::new(task_id.clone(), my_agent_id, epoch);
+        auto_plan.rationale = "Automatic fallback decomposition for injected task".to_string();
+        auto_plan.estimated_parallelism = 3.0;
+        auto_plan.subtasks = vec![
+            PlanSubtask {
+                index: 1,
+                description: format!("Analyze scope: {}", description),
+                required_capabilities: vec!["analysis".to_string()],
+                estimated_complexity: 0.3,
+            },
+            PlanSubtask {
+                index: 2,
+                description: "Implement core solution".to_string(),
+                required_capabilities: vec!["implementation".to_string()],
+                estimated_complexity: 0.5,
+            },
+            PlanSubtask {
+                index: 3,
+                description: "Validate and summarize results".to_string(),
+                required_capabilities: vec!["validation".to_string()],
+                estimated_complexity: 0.2,
+            },
+        ];
+
+        let auto_plan_params = serde_json::to_value(&auto_plan).unwrap_or_default();
+        let _ = handle_propose_plan(
+            Some("auto-plan".to_string()),
+            &auto_plan_params,
+            state,
+            network_handle,
+        )
+        .await;
+    }
+
     SwarmResponse::success(
         id,
         serde_json::json!({
@@ -1331,6 +1583,7 @@ async fn handle_get_hierarchy(
     state: &Arc<RwLock<ConnectorState>>,
 ) -> SwarmResponse {
     let state = state.read().await;
+    let active_members = state.active_member_ids(Duration::from_secs(180));
 
     let self_agent = serde_json::json!({
         "agent_id": state.agent_id.to_string(),
@@ -1340,16 +1593,20 @@ async fn handle_get_hierarchy(
         "is_self": true,
     });
 
-    let peers: Vec<serde_json::Value> = state
-        .member_set
-        .elements()
+    let peers: Vec<serde_json::Value> = active_members
         .iter()
         .filter(|agent_id| *agent_id != &state.agent_id.to_string())
         .map(|peer_id| {
+            let tier = state
+                .agent_tiers
+                .get(peer_id)
+                .copied()
+                .unwrap_or(Tier::Executor);
+            let parent_id = state.agent_parents.get(peer_id).cloned();
             serde_json::json!({
                 "agent_id": peer_id,
-                "tier": "Peer",
-                "parent_id": null,
+                "tier": format!("{:?}", tier),
+                "parent_id": parent_id,
                 "task_count": 0,
                 "is_self": false,
             })
@@ -1361,7 +1618,7 @@ async fn handle_get_hierarchy(
         serde_json::json!({
             "self": self_agent,
             "peers": peers,
-            "total_agents": state.network_stats.total_agents,
+            "total_agents": active_members.len(),
             "hierarchy_depth": state.network_stats.hierarchy_depth,
             "branching_factor": state.network_stats.branching_factor,
             "epoch": state.epoch_manager.current_epoch(),

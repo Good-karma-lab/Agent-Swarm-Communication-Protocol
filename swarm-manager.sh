@@ -24,10 +24,10 @@ if [ -f "openswarm.conf" ]; then
 fi
 
 # Default configuration
-AGENT_IMPL=${AGENT_IMPL:-claude-code-cli}
-LLM_BACKEND=${LLM_BACKEND:-anthropic}
+AGENT_IMPL=${AGENT_IMPL:-zeroclaw}
+LLM_BACKEND=${LLM_BACKEND:-openrouter}
 LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-./models/gpt-oss-20b.gguf}
-MODEL_NAME=${MODEL_NAME:-gpt-oss:20b}
+MODEL_NAME=${MODEL_NAME:-arcee-ai/trinity-large-preview:free}
 ZEROCLAW_AUTO_UPDATE=${ZEROCLAW_AUTO_UPDATE:-true}
 
 usage() {
@@ -417,6 +417,18 @@ start_agents() {
         fi
     fi
 
+    if [ "$AGENT_IMPL" = "zeroclaw" ] && [ "$LLM_BACKEND" = "ollama" ]; then
+        if [ -x "./scripts/setup-local-llm.sh" ]; then
+            echo -e "${BLUE}Ensuring local Ollama model server is running...${NC}"
+            ./scripts/setup-local-llm.sh start >/dev/null || {
+                echo -e "${RED}Failed to start local model server via scripts/setup-local-llm.sh${NC}"
+                exit 1
+            }
+            echo -e "${GREEN}✓${NC} Local model server ready"
+            echo ""
+        fi
+    fi
+
     for i in $(seq 1 $num_agents); do
         local agent_name="swarm-agent-$i"
         local log_file="$SWARM_DIR/$agent_name.log"
@@ -431,7 +443,7 @@ start_agents() {
 
         # Build connector command
         local connector_cmd="./target/release/openswarm-connector"
-        connector_cmd="$connector_cmd --listen /ip4/0.0.0.0/tcp/$p2p_port"
+        connector_cmd="$connector_cmd --listen /ip4/127.0.0.1/tcp/$p2p_port"
         connector_cmd="$connector_cmd --rpc 127.0.0.1:$rpc_port"
         connector_cmd="$connector_cmd --files-addr 127.0.0.1:$files_port"
         connector_cmd="$connector_cmd --agent-name $agent_name"
@@ -458,6 +470,18 @@ start_agents() {
         fi
 
         echo -e "  ${GREEN}✓${NC} Connector started (PID: $connector_pid, RPC: $rpc_port, Files: $files_port)"
+
+        # Force explicit RPC connect to bootstrap node to improve convergence.
+        if [ -n "$bootstrap_addr" ]; then
+            for connect_try in {1..5}; do
+                local connect_resp=$(echo "{\"jsonrpc\":\"2.0\",\"method\":\"swarm.connect\",\"params\":{\"addr\":\"$bootstrap_addr\"},\"id\":\"connect\",\"signature\":\"\"}" | nc 127.0.0.1 "$rpc_port" 2>/dev/null || true)
+                if echo "$connect_resp" | grep -q '"connected":true'; then
+                    echo -e "  ${GREEN}✓${NC} Connected to bootstrap node"
+                    break
+                fi
+                sleep 1
+            done
+        fi
 
         # Wait for file server to be ready
         echo -e "  ${BLUE}Waiting for file server...${NC}"

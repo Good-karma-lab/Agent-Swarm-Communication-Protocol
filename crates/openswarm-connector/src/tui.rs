@@ -28,6 +28,21 @@ use tokio::sync::RwLock;
 
 use crate::connector::{ConnectorState, ConnectorStatus};
 
+#[derive(Debug, Clone, Default)]
+struct FlowSummary {
+    injected: usize,
+    proposed: usize,
+    commits: usize,
+    reveals: usize,
+    votes: usize,
+    selected: usize,
+    subtasks: usize,
+    assignments: usize,
+    results: usize,
+    message_events: usize,
+    peer_events: usize,
+}
+
 /// A log entry for the event log panel.
 #[derive(Debug, Clone)]
 pub struct LogEntry {
@@ -113,6 +128,8 @@ impl SwarmTui {
     async fn snapshot(&self) -> StateSnapshot {
         let state = self.state.read().await;
         let cascade_status = state.cascade.status();
+        let flow_summary = summarize_flow(&state.task_timelines, &state.event_log);
+        let (tier1_count, tier2_count, tiern_count, executor_count) = summarize_tiers(&state);
 
         let current_swarm_id_str = state.current_swarm_id.as_str().to_string();
         let current_swarm_name = state
@@ -157,6 +174,11 @@ impl SwarmTui {
             event_log: state.event_log.clone(),
             current_swarm_name,
             known_swarms,
+            tier1_count,
+            tier2_count,
+            tiern_count,
+            executor_count,
+            flow_summary,
         }
     }
 
@@ -186,14 +208,19 @@ impl SwarmTui {
         self.render_status(frame, top_row[0], snapshot);
         self.render_network(frame, top_row[1], snapshot);
 
-        // Row 2: Swarms | Consensus
+        // Row 2: Swarms | Consensus | Flow
         let mid_row = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .constraints([
+                Constraint::Percentage(34),
+                Constraint::Percentage(33),
+                Constraint::Percentage(33),
+            ])
             .split(outer[1]);
 
         self.render_swarms(frame, mid_row[0], snapshot);
         self.render_consensus(frame, mid_row[1], snapshot);
+        self.render_flow(frame, mid_row[2], snapshot);
 
         // Row 3: Tasks (full width)
         self.render_tasks(frame, outer[2], snapshot);
@@ -521,6 +548,59 @@ impl SwarmTui {
         frame.render_widget(paragraph, area);
     }
 
+    /// Render the Flow panel for end-to-end process visibility.
+    fn render_flow(&self, frame: &mut Frame, area: Rect, snap: &StateSnapshot) {
+        let block = Block::default()
+            .title(" Flow ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::LightBlue));
+
+        let f = &snap.flow_summary;
+        let text = vec![
+            Line::from(vec![
+                Span::styled("  Tiers: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    format!(
+                        "T1={} T2={} TN={} EX={}",
+                        snap.tier1_count, snap.tier2_count, snap.tiern_count, snap.executor_count
+                    ),
+                    Style::default().fg(Color::White),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  Tasks: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    format!(
+                        "inj={} prop={} sel={} sub={} res={}",
+                        f.injected, f.proposed, f.selected, f.subtasks, f.results
+                    ),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  Voting: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    format!("commit={} reveal={} votes={}", f.commits, f.reveals, f.votes),
+                    Style::default().fg(Color::Green),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  P2P: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    format!("msg_events={} peer_events={}", f.message_events, f.peer_events),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  Assignments: ", Style::default().fg(Color::Gray)),
+                Span::styled(f.assignments.to_string(), Style::default().fg(Color::White)),
+            ]),
+        ];
+
+        let paragraph = Paragraph::new(text).block(block);
+        frame.render_widget(paragraph, area);
+    }
+
     /// Render the Event Log panel.
     fn render_event_log(&self, frame: &mut Frame, area: Rect, snap: &StateSnapshot) {
         let focus_style = if self.focus == FocusPanel::EventLog {
@@ -686,6 +766,72 @@ struct StateSnapshot {
     current_swarm_name: String,
     /// (swarm_id, name, is_public, agent_count, joined)
     known_swarms: Vec<(String, String, bool, u64, bool)>,
+    tier1_count: usize,
+    tier2_count: usize,
+    tiern_count: usize,
+    executor_count: usize,
+    flow_summary: FlowSummary,
+}
+
+fn summarize_tiers(state: &ConnectorState) -> (usize, usize, usize, usize) {
+    let mut t1 = 0usize;
+    let mut t2 = 0usize;
+    let mut tn = 0usize;
+    let mut ex = 0usize;
+
+    for tier in state.agent_tiers.values() {
+        match tier {
+            openswarm_protocol::Tier::Tier1 => t1 += 1,
+            openswarm_protocol::Tier::Tier2 => t2 += 1,
+            openswarm_protocol::Tier::TierN(_) => tn += 1,
+            openswarm_protocol::Tier::Executor => ex += 1,
+        }
+    }
+
+    if t1 + t2 + tn + ex == 0 {
+        match state.my_tier {
+            openswarm_protocol::Tier::Tier1 => t1 = 1,
+            openswarm_protocol::Tier::Tier2 => t2 = 1,
+            openswarm_protocol::Tier::TierN(_) => tn = 1,
+            openswarm_protocol::Tier::Executor => ex = 1,
+        }
+    }
+
+    (t1, t2, tn, ex)
+}
+
+fn summarize_flow(
+    timelines: &std::collections::HashMap<String, Vec<crate::connector::TaskTimelineEvent>>,
+    log: &[LogEntry],
+) -> FlowSummary {
+    let mut summary = FlowSummary::default();
+
+    for events in timelines.values() {
+        for event in events {
+            match event.stage.as_str() {
+                "injected" => summary.injected += 1,
+                "proposed" => summary.proposed += 1,
+                "proposal_commit" => summary.commits += 1,
+                "proposal_reveal" => summary.reveals += 1,
+                "vote_recorded" => summary.votes += 1,
+                "plan_selected" => summary.selected += 1,
+                "subtask_created" => summary.subtasks += 1,
+                "subtask_assigned" | "assigned" => summary.assignments += 1,
+                "result_submitted" => summary.results += 1,
+                _ => {}
+            }
+        }
+    }
+
+    for entry in log.iter().rev().take(200) {
+        match entry.category {
+            LogCategory::Message => summary.message_events += 1,
+            LogCategory::Peer => summary.peer_events += 1,
+            _ => {}
+        }
+    }
+
+    summary
 }
 
 /// Format a Tier enum into a human-readable string.
@@ -813,4 +959,57 @@ pub async fn run_tui(state: Arc<RwLock<ConnectorState>>) -> Result<(), anyhow::E
     restore_terminal(&mut terminal)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flow_summary_counts_task_stages_and_p2p_events() {
+        let mut timelines = std::collections::HashMap::new();
+        timelines.insert(
+            "t1".to_string(),
+            vec![
+                crate::connector::TaskTimelineEvent {
+                    timestamp: chrono::Utc::now(),
+                    stage: "injected".to_string(),
+                    detail: "".to_string(),
+                    actor: None,
+                },
+                crate::connector::TaskTimelineEvent {
+                    timestamp: chrono::Utc::now(),
+                    stage: "proposed".to_string(),
+                    detail: "".to_string(),
+                    actor: None,
+                },
+                crate::connector::TaskTimelineEvent {
+                    timestamp: chrono::Utc::now(),
+                    stage: "result_submitted".to_string(),
+                    detail: "".to_string(),
+                    actor: None,
+                },
+            ],
+        );
+
+        let log = vec![
+            LogEntry {
+                timestamp: chrono::Utc::now(),
+                category: LogCategory::Message,
+                message: "m".to_string(),
+            },
+            LogEntry {
+                timestamp: chrono::Utc::now(),
+                category: LogCategory::Peer,
+                message: "p".to_string(),
+            },
+        ];
+
+        let summary = summarize_flow(&timelines, &log);
+        assert_eq!(summary.injected, 1);
+        assert_eq!(summary.proposed, 1);
+        assert_eq!(summary.results, 1);
+        assert_eq!(summary.message_events, 1);
+        assert_eq!(summary.peer_events, 1);
+    }
 }
