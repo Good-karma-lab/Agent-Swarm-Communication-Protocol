@@ -12,6 +12,7 @@ LLM_BACKEND="anthropic"  # Default: anthropic (Claude API)
 MODEL_PATH=""
 API_KEY=""
 MODEL_NAME=""
+API_BASE_URL=""
 
 usage() {
     cat << EOF
@@ -23,10 +24,11 @@ Options:
     --agent-name NAME       Agent identifier
     --rpc-port PORT         RPC server port (default: 9370)
     --files-port PORT       File server port (default: 9371)
-    --llm-backend BACKEND   LLM backend: anthropic|openai|local|ollama (default: anthropic)
+    --llm-backend BACKEND   LLM backend: anthropic|openai|openrouter|local|ollama (default: anthropic)
     --model-path PATH       Path to local model file (for local backend)
     --api-key KEY           API key for cloud providers
     --model-name NAME       Model name (e.g., claude-opus-4, gpt-4, llama3:70b)
+    --api-base-url URL      Optional API base URL (OpenAI-compatible backends)
     -h, --help              Show this help
 
 Examples:
@@ -38,6 +40,9 @@ Examples:
 
     # Use Ollama with gpt-oss:20b (recommended)
     $0 --agent-name alice --rpc-port 9370 --llm-backend ollama --model-name gpt-oss:20b
+
+    # Use OpenRouter with MiniMax M2.5
+    $0 --agent-name alice --rpc-port 9370 --llm-backend openrouter --model-name minimax/minimax-m2.5
 
 EOF
     exit 0
@@ -71,6 +76,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --model-name)
             MODEL_NAME="$2"
+            shift 2
+            ;;
+        --api-base-url)
+            API_BASE_URL="$2"
             shift 2
             ;;
         -h|--help)
@@ -128,7 +137,22 @@ case $LLM_BACKEND in
             exit 1
         fi
         export OPENAI_API_KEY="${API_KEY:-$OPENAI_API_KEY}"
+        if [ -n "$API_BASE_URL" ]; then
+            export OPENAI_BASE_URL="$API_BASE_URL"
+        fi
         MODEL_NAME="${MODEL_NAME:-gpt-4}"
+        LLM_CONFIG="--backend openai --model $MODEL_NAME"
+        ;;
+    openrouter)
+        if [ -z "$API_KEY" ] && [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "Error: API key required for OpenRouter backend"
+            echo "Set OPENROUTER_API_KEY environment variable or use --api-key"
+            exit 1
+        fi
+
+        export OPENAI_API_KEY="${API_KEY:-$OPENROUTER_API_KEY}"
+        export OPENAI_BASE_URL="${API_BASE_URL:-https://openrouter.ai/api/v1}"
+        MODEL_NAME="${MODEL_NAME:-minimax/minimax-m2.5}"
         LLM_CONFIG="--backend openai --model $MODEL_NAME"
         ;;
     local)
@@ -168,7 +192,7 @@ case $LLM_BACKEND in
         ;;
     *)
         echo "Error: Unknown LLM backend: $LLM_BACKEND"
-        echo "Supported backends: anthropic, openai, local, ollama"
+        echo "Supported backends: anthropic, openai, openrouter, local, ollama"
         exit 1
         ;;
 esac
@@ -181,18 +205,18 @@ You are an autonomous OpenSwarm agent running in Zeroclaw.
 CRITICAL: Run in an INFINITE LOOP until interrupted.
 
 Your Agent ID: $AGENT_NAME
-RPC Endpoint: http://127.0.0.1:$RPC_PORT
+RPC Endpoint: tcp://127.0.0.1:$RPC_PORT
 Skill Documentation: http://127.0.0.1:$FILES_PORT/SKILL.md
 
 INITIALIZATION (run once):
 1. Fetch skill documentation:
    curl http://127.0.0.1:$FILES_PORT/SKILL.md
 
-2. Register with swarm:
-   curl -X POST http://127.0.0.1:$RPC_PORT -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"swarm.register_agent","params":{"agent_id":"$AGENT_NAME"},"id":"init"}'
+2. Register with swarm (TCP JSON-RPC):
+   echo '{"jsonrpc":"2.0","method":"swarm.register_agent","params":{"agent_id":"$AGENT_NAME"},"id":"init","signature":""}' | nc 127.0.0.1 $RPC_PORT
 
 3. Get your status to learn your tier:
-   curl -X POST http://127.0.0.1:$RPC_PORT -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"swarm.get_status","params":{},"id":"status"}'
+   echo '{"jsonrpc":"2.0","method":"swarm.get_status","params":{},"id":"status","signature":""}' | nc 127.0.0.1 $RPC_PORT
 
 4. Parse the response to extract your tier: "tier": "Tier1" / "Tier2" / ... / "Executor"
 
@@ -201,14 +225,14 @@ INITIALIZATION (run once):
 MAIN LOOP (run forever):
 While true:
   1. Poll for tasks (every 60 seconds):
-     curl -X POST http://127.0.0.1:$RPC_PORT -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"swarm.receive_task","params":{},"id":"poll"}'
+     echo '{"jsonrpc":"2.0","method":"swarm.receive_task","params":{},"id":"poll","signature":""}' | nc 127.0.0.1 $RPC_PORT
 
   2. Track which task IDs you've already processed (keep a list in memory)
 
   3. For each NEW task (not already processed):
 
-     A. Get task details:
-        curl -X POST http://127.0.0.1:$RPC_PORT -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"swarm.get_task","params":{"task_id":"TASK_ID"},"id":"task"}'
+      A. Get task details:
+         echo '{"jsonrpc":"2.0","method":"swarm.get_task","params":{"task_id":"TASK_ID"},"id":"task","signature":""}' | nc 127.0.0.1 $RPC_PORT
 
      B. IF YOUR TIER IS A COORDINATOR (Tier1, Tier2, ..., TierN - anything except Executor):
         - You decompose tasks into subtasks
@@ -228,7 +252,7 @@ While true:
             "estimated_parallelism": NUMBER_OF_SUBTASKS
           }
         - Submit plan:
-          curl -X POST http://127.0.0.1:$RPC_PORT -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"swarm.propose_plan","params":PLAN_JSON,"id":"propose"}'
+          echo '{"jsonrpc":"2.0","method":"swarm.propose_plan","params":PLAN_JSON,"id":"propose","signature":""}' | nc 127.0.0.1 $RPC_PORT
         - Mark task as processed
 
      C. IF YOUR TIER IS 'Executor' (Leaf Worker):
@@ -256,7 +280,7 @@ While true:
             "merkle_proof": []
           }
         - Submit result:
-          curl -X POST http://127.0.0.1:$RPC_PORT -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"swarm.submit_result","params":RESULT_JSON,"id":"result"}'
+          echo '{"jsonrpc":"2.0","method":"swarm.submit_result","params":RESULT_JSON,"id":"result","signature":""}' | nc 127.0.0.1 $RPC_PORT
         - Mark task as processed
 
   4. Sleep 60 seconds and repeat

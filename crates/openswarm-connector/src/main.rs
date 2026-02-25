@@ -206,9 +206,14 @@ async fn main() -> anyhow::Result<()> {
     if cli.console {
         // Launch the operator console.
         let console_state = state.clone();
+        let console_network_handle = connector.network_handle();
         let console_handle = tokio::spawn(async move {
             if let Err(e) =
-                openswarm_connector::operator_console::run_operator_console(console_state).await
+                openswarm_connector::operator_console::run_operator_console(
+                    console_state,
+                    console_network_handle,
+                )
+                .await
             {
                 let err_msg = e.to_string();
                 if err_msg.contains("TTY") || err_msg.contains("terminal") {

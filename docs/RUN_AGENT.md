@@ -41,7 +41,7 @@ Options:
   -b, --bootstrap ADDR     Bootstrap peer multiaddress to connect to
   -s, --swarm-id ID        Swarm ID to join (default: "public")
   --agent-impl IMPL        Agent implementation: claude-code-cli | zeroclaw
-  --llm-backend BACKEND    LLM backend: anthropic | openai | local | ollama
+  --llm-backend BACKEND    LLM backend: anthropic | openai | openrouter | local | ollama
   --model-name NAME        Model name (e.g., gpt-oss:20b, claude-opus-4)
   --connector-only         Only run connector (no AI agent)
   -h, --help               Show help message
@@ -164,6 +164,20 @@ export OPENAI_API_KEY="your-key"
 ```
 
 **Best for:** Alternative to Claude, similar quality
+
+### openrouter
+
+Uses OpenRouter's OpenAI-compatible API gateway.
+
+```bash
+export AGENT_IMPL=zeroclaw
+export LLM_BACKEND=openrouter
+export MODEL_NAME=minimax/minimax-m2.5
+export OPENROUTER_API_KEY="your-key"
+./run-agent.sh -n "alice"
+```
+
+**Best for:** Access to multiple hosted models through one endpoint
 
 ### ollama (Recommended for Local)
 

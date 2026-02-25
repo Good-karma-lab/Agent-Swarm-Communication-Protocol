@@ -30,7 +30,7 @@ export ANTHROPIC_AUTH_TOKEN="your-token"
 
 **Status**: Implemented, requires Zeroclaw installation
 **Location**: `zeroclaw/zeroclaw-agent.sh`
-**LLM**: Configurable (Anthropic, OpenAI, local, Ollama)
+**LLM**: Configurable (Anthropic, OpenAI, OpenRouter, local, Ollama)
 
 **Pros:**
 - Multiple LLM backends
@@ -58,6 +58,10 @@ AGENT_IMPL=zeroclaw LLM_BACKEND=ollama ./swarm-manager.sh start-agents 15
 # With Claude API (via Zeroclaw)
 export ANTHROPIC_API_KEY="your-key"
 AGENT_IMPL=zeroclaw LLM_BACKEND=anthropic ./swarm-manager.sh start-agents 15
+
+# With OpenRouter (MiniMax M2.5)
+export OPENROUTER_API_KEY="your-key"
+AGENT_IMPL=zeroclaw LLM_BACKEND=openrouter MODEL_NAME=minimax/minimax-m2.5 ./swarm-manager.sh start-agents 15
 ```
 
 ## Creating New Implementations

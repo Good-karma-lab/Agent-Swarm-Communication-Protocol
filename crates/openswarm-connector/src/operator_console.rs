@@ -27,7 +27,9 @@ use tokio::sync::RwLock;
 
 use crate::connector::{ConnectorState, ConnectorStatus};
 use crate::tui::{LogCategory, LogEntry};
-use openswarm_protocol::{Task, TaskStatus, Tier};
+use openswarm_protocol::{
+    ProtocolMethod, SwarmMessage, SwarmTopics, Task, TaskInjectionParams, TaskStatus, Tier,
+};
 
 /// A node in the hierarchy tree for display.
 #[derive(Debug, Clone)]
@@ -69,6 +71,7 @@ struct TaskView {
 /// The operator console TUI state.
 struct OperatorConsole {
     state: Arc<RwLock<ConnectorState>>,
+    network_handle: openswarm_network::SwarmHandle,
     /// Current text in the input field.
     input: String,
     /// Cursor position within the input field.
@@ -87,7 +90,10 @@ struct OperatorConsole {
 }
 
 impl OperatorConsole {
-    fn new(state: Arc<RwLock<ConnectorState>>) -> Self {
+    fn new(
+        state: Arc<RwLock<ConnectorState>>,
+        network_handle: openswarm_network::SwarmHandle,
+    ) -> Self {
         let mut console_messages = Vec::new();
         console_messages.push((
             chrono::Utc::now(),
@@ -102,6 +108,7 @@ impl OperatorConsole {
 
         Self {
             state,
+            network_handle,
             input: String::new(),
             cursor_pos: 0,
             history: Vec::new(),
@@ -362,10 +369,12 @@ impl OperatorConsole {
         let epoch = state.epoch_manager.current_epoch();
         let task = Task::new(description.to_string(), 1, epoch);
         let task_id = task.task_id.clone();
+        let originator = state.agent_id.clone();
+        let swarm_id = state.current_swarm_id.as_str().to_string();
 
         // Add task to the local task set.
         state.task_set.add(task_id.clone());
-        state.task_details.insert(task_id.clone(), task);
+        state.task_details.insert(task_id.clone(), task.clone());
         let actor = state.agent_id.to_string();
         state.push_task_timeline_event(
             &task_id,
@@ -381,6 +390,33 @@ impl OperatorConsole {
         );
 
         drop(state);
+
+        // Publish task injection to the swarm network so all peers can process it.
+        let inject_params = TaskInjectionParams {
+            task: task.clone(),
+            originator,
+        };
+
+        let msg = SwarmMessage::new(
+            ProtocolMethod::TaskInjection.as_str(),
+            serde_json::to_value(&inject_params).unwrap_or_default(),
+            String::new(),
+        );
+
+        if let Ok(data) = serde_json::to_vec(&msg) {
+            let topic = SwarmTopics::tasks_for(&swarm_id, 1);
+            if let Err(e) = self.network_handle.publish(&topic, data).await {
+                tracing::debug!(error = %e, "Failed to publish console task injection");
+            }
+
+            let proposals_topic = SwarmTopics::proposals_for(&swarm_id, &task_id);
+            let voting_topic = SwarmTopics::voting_for(&swarm_id, &task_id);
+            let results_topic = SwarmTopics::results_for(&swarm_id, &task_id);
+
+            let _ = self.network_handle.subscribe(&proposals_topic).await;
+            let _ = self.network_handle.subscribe(&voting_topic).await;
+            let _ = self.network_handle.subscribe(&results_topic).await;
+        }
 
         self.add_message(
             &format!("Task injected: {}", task_id),
@@ -977,6 +1013,7 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Re
 /// - Use slash commands for additional operations
 pub async fn run_operator_console(
     state: Arc<RwLock<ConnectorState>>,
+    network_handle: openswarm_network::SwarmHandle,
 ) -> Result<(), anyhow::Error> {
     use std::io::IsTerminal;
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
@@ -994,7 +1031,7 @@ pub async fn run_operator_console(
     }));
 
     let mut terminal = setup_terminal()?;
-    let mut console = OperatorConsole::new(state);
+    let mut console = OperatorConsole::new(state, network_handle);
 
     let tick_rate = Duration::from_millis(100); // ~10fps
 
@@ -1034,6 +1071,13 @@ pub async fn run_operator_console(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openswarm_network::{
+        NetworkEvent, SwarmHost, SwarmHostConfig, discovery::DiscoveryConfig,
+        transport::TransportConfig,
+    };
+    use openswarm_protocol::SwarmTopics;
+    use std::time::Duration;
+    use tokio::time::timeout;
 
     #[test]
     fn hierarchy_building_shows_only_known_agents() {
@@ -1063,6 +1107,11 @@ mod tests {
             granularity: GranularityAlgorithm::default(),
             my_tier: Tier::Executor,
             parent_id: None,
+            agent_tiers: std::collections::HashMap::new(),
+            agent_parents: std::collections::HashMap::new(),
+            current_layout: None,
+            subordinates: std::collections::HashMap::new(),
+            task_results: std::collections::HashMap::new(),
             network_stats: openswarm_protocol::NetworkStats {
                 total_agents: 0,
                 hierarchy_depth: 1,
@@ -1087,5 +1136,129 @@ mod tests {
         assert!(tree.iter().all(|n| n.tier == "Agent"));
         assert!(tree.iter().all(|n| !n.is_self));
         assert!(tree.iter().all(|n| n.last_seen_secs.is_some()));
+    }
+
+    #[tokio::test]
+    async fn console_inject_task_publishes_to_swarm() {
+        let cfg = SwarmHostConfig {
+            listen_addr: "/ip4/127.0.0.1/tcp/0".parse().expect("valid listen addr"),
+            transport: TransportConfig::default(),
+            discovery: DiscoveryConfig {
+                mdns_enabled: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let (host_a, handle_a, mut events_a) = SwarmHost::new(cfg.clone()).expect("host A");
+        let (host_b, handle_b, mut events_b) = SwarmHost::new(cfg).expect("host B");
+
+        let task_a = tokio::spawn(async move { host_a.run().await });
+        let task_b = tokio::spawn(async move { host_b.run().await });
+
+        let mut addr_b = None;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while tokio::time::Instant::now() < deadline {
+            match timeout(Duration::from_millis(250), events_b.recv()).await {
+                Ok(Some(NetworkEvent::Listening(addr))) => {
+                    addr_b = Some(addr);
+                    break;
+                }
+                Ok(Some(_)) | Ok(None) | Err(_) => {}
+            }
+        }
+        let addr_b = addr_b.expect("node B listening address");
+
+        handle_a.dial(addr_b).await.expect("dial B");
+
+        let connected = timeout(Duration::from_secs(10), async {
+            loop {
+                if let Some(NetworkEvent::PeerConnected(_)) = events_a.recv().await {
+                    return true;
+                }
+            }
+        })
+        .await
+        .expect("connection event timeout");
+        assert!(connected);
+
+        let task_topic = SwarmTopics::tasks_for("public", 1);
+        handle_b
+            .subscribe(&task_topic)
+            .await
+            .expect("subscribe B task topic");
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        use openswarm_hierarchy::{EpochManager, GeoCluster, PyramidAllocator, SuccessionManager};
+        use openswarm_protocol::{AgentId, SwarmId, Tier};
+        use openswarm_state::{ContentStore, GranularityAlgorithm, MerkleDag, OrSet};
+
+        let state = ConnectorState {
+            agent_id: AgentId::new("did:swarm:console-test".to_string()),
+            status: ConnectorStatus::Running,
+            epoch_manager: EpochManager::default(),
+            pyramid: PyramidAllocator::default(),
+            election: None,
+            geo_cluster: GeoCluster::default(),
+            succession: SuccessionManager::new(),
+            rfp_coordinators: std::collections::HashMap::new(),
+            voting_engines: std::collections::HashMap::new(),
+            cascade: openswarm_consensus::CascadeEngine::new(),
+            task_set: OrSet::new("seed".to_string()),
+            task_details: std::collections::HashMap::new(),
+            task_timelines: std::collections::HashMap::new(),
+            agent_set: OrSet::new("seed".to_string()),
+            member_set: OrSet::new("seed".to_string()),
+            member_last_seen: std::collections::HashMap::new(),
+            merkle_dag: MerkleDag::new(),
+            content_store: ContentStore::new(),
+            granularity: GranularityAlgorithm::default(),
+            my_tier: Tier::Tier1,
+            parent_id: None,
+            agent_tiers: std::collections::HashMap::new(),
+            agent_parents: std::collections::HashMap::new(),
+            current_layout: None,
+            subordinates: std::collections::HashMap::new(),
+            task_results: std::collections::HashMap::new(),
+            network_stats: openswarm_protocol::NetworkStats {
+                total_agents: 1,
+                hierarchy_depth: 1,
+                branching_factor: 10,
+                current_epoch: 1,
+                my_tier: Tier::Tier1,
+                subordinate_count: 0,
+                parent_id: None,
+            },
+            event_log: Vec::new(),
+            start_time: chrono::Utc::now(),
+            current_swarm_id: SwarmId::new("public".to_string()),
+            known_swarms: std::collections::HashMap::new(),
+            swarm_token: None,
+        };
+
+        let mut console = OperatorConsole::new(Arc::new(RwLock::new(state)), handle_a.clone());
+        console.inject_task("console injected task").await;
+
+        let received = timeout(Duration::from_secs(10), async {
+            loop {
+                match events_b.recv().await {
+                    Some(NetworkEvent::MessageReceived { topic, data, .. }) if topic == task_topic => {
+                        return Some(data);
+                    }
+                    Some(_) => continue,
+                    None => return None,
+                }
+            }
+        })
+        .await
+        .expect("message receive timeout")
+        .expect("task injection message");
+
+        let msg: openswarm_protocol::SwarmMessage =
+            serde_json::from_slice(&received).expect("valid swarm message");
+        assert_eq!(msg.method, openswarm_protocol::ProtocolMethod::TaskInjection.as_str());
+
+        task_a.abort();
+        task_b.abort();
     }
 }

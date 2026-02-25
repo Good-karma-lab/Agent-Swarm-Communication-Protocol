@@ -27,6 +27,8 @@ fi
 AGENT_IMPL=${AGENT_IMPL:-claude-code-cli}
 LLM_BACKEND=${LLM_BACKEND:-anthropic}
 LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-./models/gpt-oss-20b.gguf}
+MODEL_NAME=${MODEL_NAME:-gpt-oss:20b}
+ZEROCLAW_AUTO_UPDATE=${ZEROCLAW_AUTO_UPDATE:-true}
 
 usage() {
     cat << EOF
@@ -45,8 +47,9 @@ Commands:
 
 Environment Variables:
     AGENT_IMPL          Agent implementation: claude-code-cli (default) | zeroclaw
-    LLM_BACKEND         LLM backend for Zeroclaw: anthropic | openai | local | ollama
+    LLM_BACKEND         LLM backend for Zeroclaw: anthropic | openai | openrouter | local | ollama
     LOCAL_MODEL_PATH    Path to local model file (for local backend)
+    MODEL_NAME          Model name (for OpenAI/OpenRouter/Ollama backends)
 
 Examples:
     # Start 3 connector nodes
@@ -404,6 +407,16 @@ start_agents() {
 
     local bootstrap_addr=""
 
+    if [ "$AGENT_IMPL" = "zeroclaw" ] && [ "$ZEROCLAW_AUTO_UPDATE" = "true" ]; then
+        if [ -x "./scripts/update-zeroclaw.sh" ]; then
+            echo -e "${BLUE}Updating Zeroclaw to latest version...${NC}"
+            ./scripts/update-zeroclaw.sh || {
+                echo -e "${YELLOW}Warning: Zeroclaw update failed, continuing with installed version.${NC}"
+            }
+            echo ""
+        fi
+    fi
+
     for i in $(seq 1 $num_agents); do
         local agent_name="swarm-agent-$i"
         local log_file="$SWARM_DIR/$agent_name.log"
@@ -485,6 +498,7 @@ start_agents() {
                 --files-port "$files_port" \
                 --llm-backend "$LLM_BACKEND" \
                 --model-path "$LOCAL_MODEL_PATH" \
+                --model-name "$MODEL_NAME" \
                 > "$zeroclaw_log_file" 2>&1 &
             local agent_pid=$!
 

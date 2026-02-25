@@ -18,6 +18,7 @@ AGENT_IMPL=${AGENT_IMPL:-claude-code-cli}
 LLM_BACKEND=${LLM_BACKEND:-ollama}
 LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-./models/gpt-oss-20b.gguf}
 MODEL_NAME=${MODEL_NAME:-gpt-oss:20b}
+ZEROCLAW_AUTO_UPDATE=${ZEROCLAW_AUTO_UPDATE:-true}
 
 # Colors for output
 RED='\033[0;31m'
@@ -67,7 +68,7 @@ Options:
     -b, --bootstrap ADDR     Bootstrap peer multiaddress
     -s, --swarm-id ID        Swarm ID to join (default: public)
     --agent-impl IMPL        Agent implementation: claude-code-cli | zeroclaw (default: $AGENT_IMPL)
-    --llm-backend BACKEND    LLM backend for Zeroclaw: anthropic | openai | local | ollama (default: $LLM_BACKEND)
+    --llm-backend BACKEND    LLM backend for Zeroclaw: anthropic | openai | openrouter | local | ollama (default: $LLM_BACKEND)
     --model-name NAME        Model name (default: $MODEL_NAME)
     --connector-only         Only run the connector (no AI agent)
     -h, --help               Show this help message
@@ -145,6 +146,15 @@ done
 # Generate agent name if not provided
 if [ -z "$AGENT_NAME" ]; then
     AGENT_NAME="agent-$(date +%s)-$$"
+fi
+
+if [ "$AGENT_IMPL" = "zeroclaw" ] && [ "$ZEROCLAW_AUTO_UPDATE" = "true" ]; then
+    if [ -x "./scripts/update-zeroclaw.sh" ]; then
+        echo -e "${BLUE}Updating Zeroclaw to latest version...${NC}"
+        ./scripts/update-zeroclaw.sh || {
+            echo -e "${YELLOW}Warning: Zeroclaw update failed, continuing with installed version.${NC}"
+        }
+    fi
 fi
 
 # Find available ports

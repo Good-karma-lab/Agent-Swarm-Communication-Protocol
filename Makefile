@@ -36,7 +36,7 @@ ifeq ($(UNAME_M),arm64)
     ARCH := arm64
 endif
 
-.PHONY: all build release debug test check clean install uninstall dist \
+.PHONY: all build release debug test e2e check clean install uninstall dist \
         cross-linux cross-linux-arm cross-macos cross-all \
         fmt lint doc help
 
@@ -59,6 +59,10 @@ debug:
 ## Run all tests
 test:
 	$(CARGO) test --workspace
+
+## Run end-to-end tests
+e2e:
+	bash tests/e2e/run_all.sh
 
 ## Run clippy lint checks
 lint:
@@ -158,6 +162,7 @@ help:
 	@echo "  debug          Build debug binary"
 	@echo "  check          Check compilation without building"
 	@echo "  test           Run all tests"
+	@echo "  e2e            Run end-to-end test suites"
 	@echo "  lint           Run clippy lints"
 	@echo "  fmt            Format all code"
 	@echo "  doc            Generate and open documentation"
