@@ -6,10 +6,12 @@
 //! - Recursive decomposition cascade for multi-tier task distribution
 
 pub mod cascade;
+pub mod mock_planner;
 pub mod rfp;
 pub mod voting;
 
 pub use cascade::CascadeEngine;
+pub use mock_planner::MockPlanGenerator;
 pub use rfp::{PlanGenerator, RfpCoordinator};
 pub use voting::VotingEngine;
 

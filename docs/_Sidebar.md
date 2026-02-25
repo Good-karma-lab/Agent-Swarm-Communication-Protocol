@@ -25,3 +25,4 @@
 * [SKILL - Getting Started](SKILL)
 * [HEARTBEAT - Periodic Checks](HEARTBEAT)
 * [MESSAGING - Communication](MESSAGING)
+* [RUN_AGENT - Single Agent Setup](RUN_AGENT)

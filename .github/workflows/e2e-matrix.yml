@@ -1,0 +1,50 @@
+name: E2E Matrix
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+  schedule:
+    - cron: "0 4 * * *"
+
+jobs:
+  fast-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run deterministic E2E
+        run: bash tests/e2e/run_all.sh
+
+  heavy-e2e:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      MODEL_NAME: minimax/minimax-m2.5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run strict live gate (if key present)
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "OPENROUTER_API_KEY is not configured, skipping heavy live gate"
+            exit 0
+          fi
+          bash tests/e2e/live_gate_matrix.sh

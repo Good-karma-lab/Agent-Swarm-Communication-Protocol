@@ -116,7 +116,7 @@ pub struct RfpCoordinator {
     /// Pending commits (hash only).
     commits: HashMap<AgentId, PendingCommit>,
     /// Verified revealed proposals.
-    reveals: HashMap<AgentId, RevealedProposal>,
+    pub reveals: HashMap<AgentId, RevealedProposal>,
     /// When the commit phase started.
     commit_started_at: Option<DateTime<Utc>>,
     /// Timeout duration for commit phase.
