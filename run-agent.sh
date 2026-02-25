@@ -8,9 +8,10 @@ set -e
 # Add cargo to PATH if not already there
 export PATH="$HOME/.cargo/bin:$PATH"
 
-# Load configuration
-if [ -f "openswarm.conf" ]; then
-    source openswarm.conf
+# Load shared environment and config defaults
+if [ -f "./scripts/load-env.sh" ]; then
+    # shellcheck disable=SC1091
+    source "./scripts/load-env.sh"
 fi
 
 # Agent implementation: claude-code-cli (default) or zeroclaw

@@ -18,9 +18,10 @@ NC='\033[0m'
 SWARM_DIR="/tmp/openswarm-swarm"
 NODES_FILE="$SWARM_DIR/nodes.txt"
 
-# Load configuration
-if [ -f "openswarm.conf" ]; then
-    source openswarm.conf
+# Load shared environment and config defaults
+if [ -f "./scripts/load-env.sh" ]; then
+    # shellcheck disable=SC1091
+    source "./scripts/load-env.sh"
 fi
 
 # Default configuration

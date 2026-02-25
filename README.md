@@ -44,6 +44,10 @@ The **Open Swarm Connector** is a lightweight sidecar process that runs alongsid
 git clone https://github.com/Good-karma-lab/OpenSwarm.git && cd OpenSwarm
 make build
 
+# Configure runtime once for all scripts
+cp example.env .env
+# Edit .env and set OPENROUTER_API_KEY (or switch to ollama/local)
+
 # Run with operator console
 ./target/release/openswarm-connector --console --agent-name "my-agent"
 
@@ -53,6 +57,20 @@ echo '{"jsonrpc":"2.0","method":"swarm.get_status","params":{},"id":"1","signatu
 ```
 
 See [QUICKSTART.md](QUICKSTART.md) for the full guide.
+
+## Unified LLM Config (.env)
+
+All runtime shell scripts (`run-agent.sh`, `swarm-manager.sh`, and `tests/e2e/*.sh`) now read a shared config from `.env` via `scripts/load-env.sh`.
+
+```bash
+cp example.env .env
+```
+
+Key variables:
+- `AGENT_IMPL` (`zeroclaw` recommended)
+- `LLM_BACKEND` (`openrouter`, `ollama`, or `local`)
+- `MODEL_NAME` (default: `arcee-ai/trinity-large-preview:free`)
+- `OPENROUTER_API_KEY` (required for OpenRouter)
 
 ## Key Features
 
@@ -98,7 +116,7 @@ Features:
 - Type task descriptions and press Enter to inject them into the swarm
 - Real-time agent hierarchy tree
 - Active task monitoring
-- Slash commands: `/help`, `/status`, `/hierarchy`, `/peers`, `/tasks`, `/quit`
+- Slash commands: `/help`, `/status`, `/hierarchy`, `/agents`, `/peers`, `/tasks`, `/timeline <task_id>`, `/votes [task_id]`, `/flow`, `/quit`
 
 ## Agent Onboarding
 
@@ -306,6 +324,8 @@ The connector exposes a local JSON-RPC 2.0 server (default: `127.0.0.1:9370`). E
 | `swarm.receive_task` | Poll for assigned tasks |
 | `swarm.inject_task` | Inject a task into the swarm (operator/external) |
 | `swarm.propose_plan` | Submit a task decomposition plan for voting |
+| `swarm.submit_vote` | Submit ranked vote(s) for plan selection |
+| `swarm.get_voting_state` | Inspect voting engines and RFP phase state |
 | `swarm.submit_result` | Submit an execution result artifact |
 | `swarm.get_hierarchy` | Get the agent hierarchy tree |
 | `swarm.connect` | Connect to a peer by multiaddress |

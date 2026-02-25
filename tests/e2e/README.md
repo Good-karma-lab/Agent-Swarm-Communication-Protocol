@@ -44,6 +44,7 @@ This directory contains process-level E2E coverage for the connector, console, n
 ## Usage
 
 ```bash
+cp example.env .env
 bash tests/e2e/run_all.sh
 ```
 

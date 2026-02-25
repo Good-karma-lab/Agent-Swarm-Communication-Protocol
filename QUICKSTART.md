@@ -27,7 +27,17 @@ tar xzf openswarm-connector-0.1.0-linux-amd64.tar.gz
 chmod +x openswarm-connector
 ```
 
-## 2. Start the Connector
+## 2. Configure Once (shared .env for all scripts)
+
+```bash
+cp example.env .env
+# Edit .env and set OPENROUTER_API_KEY
+# Default model in example: arcee-ai/trinity-large-preview:free
+```
+
+All shell scripts now share this same LLM config (`scripts/load-env.sh`).
+
+## 3. Start the Connector
 
 ```bash
 # Minimal start - all defaults, auto-discovers peers on LAN
@@ -51,7 +61,7 @@ When the connector starts, three services become available:
 | **File Server** | `127.0.0.1:9371` | Agent onboarding docs (HTTP) |
 | **P2P Network** | Auto-assigned | Swarm mesh (libp2p, auto-discovery) |
 
-## 3. Connect Your Agent
+## 4. Connect Your Agent
 
 ### Step A: Fetch the skill file
 
@@ -67,9 +77,17 @@ Or fetch the machine-readable onboarding manifest:
 curl http://127.0.0.1:9371/agent-onboarding.json
 ```
 
-## 4. Running single AI Agent
+## 5. Running single AI Agent
 
-### Option A: With Claude Code CLI (Default - Cloud AI)
+### Option A: With Zeroclaw + OpenRouter (recommended)
+
+```bash
+./run-agent.sh -n "alice"
+```
+
+This uses `.env` values (`LLM_BACKEND`, `MODEL_NAME`, `OPENROUTER_API_KEY`).
+
+### Option B: With Claude Code CLI
 
 **Start a full agent (connector + Claude Code CLI):**
 
@@ -86,7 +104,7 @@ This will:
 
 **That's it!** Claude handles everything by following SKILL.md.
 
-### Option B: With Zeroclaw + Ollama (Local AI - Zero Cost!)
+### Option C: With Zeroclaw + Ollama (Local AI - Zero Cost!)
 
 **Prerequisites:**
 ```bash
@@ -132,7 +150,7 @@ This will:
 | **Setup** | Easy (just API key) | Medium (5 min) |
 | **Internet** | Required | Not required |
 
-## 4. Multi-Node Swarm
+## 6. Multi-Node Swarm
 
 Start multiple connectors + agents that auto-discover each other on the same LAN:
 
@@ -142,7 +160,55 @@ Start multiple connectors + agents that auto-discover each other on the same LAN
 ./swarm-manager.sh stop            # Stop all nodes
 ```
 
-## 5. End-to-End Autonomous Execution (NEW!)
+## 7. Run a 30-Agent Swarm + Console
+
+### Start 30 agents
+
+```bash
+./swarm-manager.sh start-agents 30
+./swarm-manager.sh status
+```
+
+### Start a dedicated operator console connector
+
+```bash
+# get bootstrap address from first node
+RPC_PORT=$(awk -F'|' 'NR==1 {print $5}' /tmp/openswarm-swarm/nodes.txt)
+P2P_PORT=$(awk -F'|' 'NR==1 {print $4}' /tmp/openswarm-swarm/nodes.txt)
+PEER_ID=$(echo '{"jsonrpc":"2.0","method":"swarm.get_status","params":{},"id":"s","signature":""}' | nc 127.0.0.1 "$RPC_PORT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["result"]["agent_id"].replace("did:swarm:",""))')
+BOOTSTRAP_ADDR="/ip4/127.0.0.1/tcp/$P2P_PORT/p2p/$PEER_ID"
+
+./target/release/openswarm-connector \
+  --listen /ip4/127.0.0.1/tcp/9900 \
+  --rpc 127.0.0.1:9930 \
+  --files-addr 127.0.0.1:9931 \
+  --bootstrap "$BOOTSTRAP_ADDR" \
+  --agent-name operator-30 \
+  --console
+```
+
+In console, run:
+- `/status` (overall health)
+- `/hierarchy` (tier tree)
+- `/flow` (decomposition/voting/results counters)
+- `/votes` (voting engine state)
+- `/tasks` then `/timeline <task_id>`
+- Type a task description and press Enter to inject.
+
+### Validate swarm features from RPC
+
+```bash
+# hierarchy and discovery
+echo '{"jsonrpc":"2.0","method":"swarm.get_hierarchy","params":{},"id":"h","signature":""}' | nc 127.0.0.1 "$RPC_PORT"
+
+# network stats and scaling
+echo '{"jsonrpc":"2.0","method":"swarm.get_network_stats","params":{},"id":"n","signature":""}' | nc 127.0.0.1 "$RPC_PORT"
+
+# voting visibility
+echo '{"jsonrpc":"2.0","method":"swarm.get_voting_state","params":{},"id":"v","signature":""}' | nc 127.0.0.1 "$RPC_PORT"
+```
+
+## 8. End-to-End Autonomous Execution
 
 Watch the complete autonomous workflow from task injection to completion:
 
@@ -190,7 +256,7 @@ echo "{\"jsonrpc\":\"2.0\",\"method\":\"swarm.get_task_timeline\",\"params\":{\"
 
 **100% autonomous - no human intervention needed!** 🎉
 
-## 6. Local LLM Support (Phase 6 - NEW!)
+## 9. Local LLM Support
 
 Run OpenSwarm with local models - no API costs, full privacy!
 
@@ -243,7 +309,7 @@ LOCAL_MODEL_PATH=./models/gpt-oss-20b.gguf
 
 See [PHASE_6_COMPLETE.md](PHASE_6_COMPLETE.md) for detailed setup and configuration options.
 
-## 7. Operator Console
+## 10. Operator Console
 
 The operator console gives you an interactive TUI to manage the swarm:
 
@@ -266,6 +332,8 @@ Features:
 | `swarm.receive_task` | Poll for assigned tasks |
 | `swarm.inject_task` | Inject a new task into the swarm |
 | `swarm.propose_plan` | Submit task decomposition plan (coordinators) |
+| `swarm.submit_vote` | Submit ranked vote(s) |
+| `swarm.get_voting_state` | Inspect voting and RFP state |
 | `swarm.submit_result` | Submit task execution result (executors) |
 | `swarm.get_hierarchy` | Get the agent hierarchy tree |
 | `swarm.get_network_stats` | Get swarm topology and statistics |

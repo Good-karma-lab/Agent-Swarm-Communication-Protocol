@@ -4,6 +4,16 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+if [ -f "$ROOT_DIR/scripts/load-env.sh" ]; then
+    # shellcheck disable=SC1091
+    source "$ROOT_DIR/scripts/load-env.sh"
+fi
+
+OLLAMA_MODEL=${MODEL_NAME:-gpt-oss:20b}
+
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
@@ -86,7 +96,7 @@ install_ollama() {
 }
 
 download_model_ollama() {
-    echo -e "${BLUE}Downloading gpt-oss:20b model via Ollama...${NC}"
+    echo -e "${BLUE}Downloading $OLLAMA_MODEL model via Ollama...${NC}"
 
     # Check if ollama is running
     if ! pgrep -x "ollama" > /dev/null; then
@@ -96,18 +106,18 @@ download_model_ollama() {
     fi
 
     # Check if model already exists
-    if ollama list | grep -q "gpt-oss:20b"; then
+    if ollama list | grep -q "$OLLAMA_MODEL"; then
         echo -e "${YELLOW}Model already downloaded${NC}"
         return 0
     fi
 
-    echo "Pulling gpt-oss:20b (this may take several minutes)..."
-    ollama pull gpt-oss:20b || {
+    echo "Pulling $OLLAMA_MODEL (this may take several minutes)..."
+    ollama pull "$OLLAMA_MODEL" || {
         echo -e "${RED}Download failed. Check your internet connection.${NC}"
         exit 1
     }
 
-    echo -e "${GREEN}✓ Model gpt-oss:20b downloaded successfully${NC}"
+    echo -e "${GREEN}✓ Model $OLLAMA_MODEL downloaded successfully${NC}"
 }
 
 download_model_llamacpp() {
@@ -141,11 +151,11 @@ start_server_ollama() {
         echo -e "${YELLOW}Ollama server already running${NC}"
 
         # Verify model is available
-        if ollama list | grep -q "gpt-oss:20b"; then
-            echo -e "${GREEN}✓ Model gpt-oss:20b is available${NC}"
+        if ollama list | grep -q "$OLLAMA_MODEL"; then
+            echo -e "${GREEN}✓ Model $OLLAMA_MODEL is available${NC}"
         else
-            echo -e "${YELLOW}Model not found, pulling gpt-oss:20b...${NC}"
-            ollama pull gpt-oss:20b
+            echo -e "${YELLOW}Model not found, pulling $OLLAMA_MODEL...${NC}"
+            ollama pull "$OLLAMA_MODEL"
         fi
         return 0
     fi
@@ -263,10 +273,10 @@ check_status() {
         echo "Available models:"
         ollama list 2>/dev/null || echo "Could not fetch model list"
 
-        # Check if gpt-oss:20b is loaded
-        if ollama list 2>/dev/null | grep -q "gpt-oss:20b"; then
+        # Check if configured model is loaded
+        if ollama list 2>/dev/null | grep -q "$OLLAMA_MODEL"; then
             echo ""
-            echo -e "${GREEN}✓ gpt-oss:20b model is available${NC}"
+            echo -e "${GREEN}✓ $OLLAMA_MODEL model is available${NC}"
         fi
         return 0
     fi
@@ -315,7 +325,7 @@ do_all() {
         echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
         echo ""
         echo "Server running on: http://localhost:11434"
-        echo "Model: gpt-oss:20b (20 billion parameters)"
+        echo "Model: $OLLAMA_MODEL"
         echo ""
         echo "Now start OpenSwarm with Zeroclaw:"
         echo "  AGENT_IMPL=zeroclaw LLM_BACKEND=ollama ./swarm-manager.sh start-agents 15"

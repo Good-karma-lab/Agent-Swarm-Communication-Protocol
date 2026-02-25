@@ -5,6 +5,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+if [ -f "$ROOT_DIR/scripts/load-env.sh" ]; then
+    # shellcheck disable=SC1091
+    source "$ROOT_DIR/scripts/load-env.sh"
+fi
+
 if [[ -z "${OPENROUTER_API_KEY:-}" ]]; then
     echo "OPENROUTER_API_KEY is required for live ZeroClaw + OpenRouter E2E"
     exit 2
@@ -12,7 +17,7 @@ fi
 
 export AGENT_IMPL=zeroclaw
 export LLM_BACKEND=openrouter
-export MODEL_NAME="${MODEL_NAME:-minimax/minimax-m2.5}"
+export MODEL_NAME="${MODEL_NAME:-arcee-ai/trinity-large-preview:free}"
 export ZEROCLAW_AUTO_UPDATE="${ZEROCLAW_AUTO_UPDATE:-true}"
 
 cd "$ROOT_DIR"

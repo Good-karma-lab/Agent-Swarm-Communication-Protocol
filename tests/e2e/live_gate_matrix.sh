@@ -4,6 +4,11 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+if [ -f "$ROOT_DIR/scripts/load-env.sh" ]; then
+    # shellcheck disable=SC1091
+    source "$ROOT_DIR/scripts/load-env.sh"
+fi
+
 LLM_BACKEND="${LLM_BACKEND:-ollama}"
 
 if [[ "$LLM_BACKEND" == "openrouter" && -z "${OPENROUTER_API_KEY:-}" ]]; then

@@ -3,6 +3,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+if [ -f "$ROOT_DIR/scripts/load-env.sh" ]; then
+    # shellcheck disable=SC1091
+    source "$ROOT_DIR/scripts/load-env.sh"
+fi
+
 cd "$ROOT_DIR"
 
 SOAK_SECS=${SOAK_SECS:-180}

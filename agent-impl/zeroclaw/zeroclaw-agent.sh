@@ -4,11 +4,19 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+if [ -f "$ROOT_DIR/scripts/load-env.sh" ]; then
+    # shellcheck disable=SC1091
+    source "$ROOT_DIR/scripts/load-env.sh"
+fi
+
 # Parse arguments
 AGENT_NAME=""
 RPC_PORT=""
 FILES_PORT=""
-LLM_BACKEND="openrouter"  # Default: OpenRouter free model
+LLM_BACKEND="${LLM_BACKEND:-openrouter}"  # Default: OpenRouter free model
 MODEL_PATH=""
 API_KEY=""
 MODEL_NAME=""
