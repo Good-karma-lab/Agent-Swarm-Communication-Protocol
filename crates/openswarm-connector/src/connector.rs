@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, RwLock};
 
-use openswarm_consensus::{CascadeEngine, PlanGenerator, RfpCoordinator, VotingEngine};
+use openswarm_consensus::{CascadeEngine, RfpCoordinator, VotingEngine};
 use openswarm_hierarchy::{
     EpochManager, GeoCluster, PyramidAllocator, SuccessionManager,
     elections::ElectionManager,
@@ -27,6 +27,8 @@ use openswarm_state::{ContentStore, GranularityAlgorithm, MerkleDag, OrSet};
 
 use crate::config::ConnectorConfig;
 use crate::tui::{LogCategory, LogEntry};
+
+const ACTIVE_MEMBER_STALENESS_SECS: u64 = 45;
 
 /// Information about a known swarm tracked by this connector.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -52,6 +54,19 @@ pub struct TaskTimelineEvent {
     pub stage: String,
     pub detail: String,
     pub actor: Option<String>,
+}
+
+/// Debug trace record for peer-to-peer traffic.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MessageTraceEvent {
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub direction: String,
+    pub peer: Option<String>,
+    pub topic: String,
+    pub method: Option<String>,
+    pub task_id: Option<String>,
+    pub size_bytes: usize,
+    pub outcome: String,
 }
 
 /// Status of the connector.
@@ -101,6 +116,12 @@ pub struct ConnectorState {
     pub member_set: OrSet<String>,
     /// Last seen timestamp for known swarm members.
     pub member_last_seen: std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>,
+    /// Human-readable display names for agents.
+    pub agent_names: std::collections::HashMap<String, String>,
+    /// Last time each agent polled tasks from its local connector loop.
+    pub member_last_task_poll: std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>,
+    /// Last time each agent submitted a task result.
+    pub member_last_result: std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>,
     /// Merkle DAG for result verification.
     pub merkle_dag: MerkleDag,
     /// Content-addressed storage.
@@ -125,6 +146,8 @@ pub struct ConnectorState {
     pub network_stats: NetworkStats,
     /// Event log for the TUI.
     pub event_log: Vec<LogEntry>,
+    /// P2P message trace log for debugging and web dashboard.
+    pub message_trace: Vec<MessageTraceEvent>,
     /// Timestamp when the connector started.
     pub start_time: chrono::DateTime<chrono::Utc>,
     /// The swarm ID this connector is currently a member of.
@@ -148,6 +171,13 @@ impl ConnectorState {
         });
     }
 
+    pub fn push_message_trace(&mut self, event: MessageTraceEvent) {
+        if self.message_trace.len() >= 5000 {
+            self.message_trace.remove(0);
+        }
+        self.message_trace.push(event);
+    }
+
     pub fn push_task_timeline_event(
         &mut self,
         task_id: &str,
@@ -168,11 +198,28 @@ impl ConnectorState {
     }
 
     pub fn mark_member_seen(&mut self, agent_id: &str) {
+        self.mark_member_seen_with_name(agent_id, None);
+    }
+
+    pub fn mark_member_seen_with_name(&mut self, agent_id: &str, name: Option<&str>) {
         if agent_id.trim().is_empty() {
             return;
         }
         self.member_set.add(agent_id.to_string());
         self.member_last_seen
+            .insert(agent_id.to_string(), chrono::Utc::now());
+        if let Some(n) = name.map(str::trim).filter(|n| !n.is_empty()) {
+            self.agent_names.insert(agent_id.to_string(), n.to_string());
+        }
+    }
+
+    pub fn mark_member_polled_tasks(&mut self, agent_id: &str) {
+        self.member_last_task_poll
+            .insert(agent_id.to_string(), chrono::Utc::now());
+    }
+
+    pub fn mark_member_submitted_result(&mut self, agent_id: &str) {
+        self.member_last_result
             .insert(agent_id.to_string(), chrono::Utc::now());
     }
 
@@ -223,6 +270,8 @@ impl ConnectorState {
             if stale != self.agent_id.to_string() {
                 self.member_set.remove(&stale);
                 self.member_last_seen.remove(&stale);
+                self.member_last_task_poll.remove(&stale);
+                self.member_last_result.remove(&stale);
                 self.agent_tiers.remove(&stale);
                 self.agent_parents.remove(&stale);
             }
@@ -325,6 +374,13 @@ impl OpenSwarmConnector {
                 m.insert(agent_id.to_string(), chrono::Utc::now());
                 m
             },
+            agent_names: {
+                let mut m = std::collections::HashMap::new();
+                m.insert(agent_id.to_string(), config.agent.name.clone());
+                m
+            },
+            member_last_task_poll: std::collections::HashMap::new(),
+            member_last_result: std::collections::HashMap::new(),
             merkle_dag: MerkleDag::new(),
             content_store: ContentStore::new(),
             granularity: GranularityAlgorithm::default(),
@@ -345,6 +401,7 @@ impl OpenSwarmConnector {
                 parent_id: None,
             },
             event_log: Vec::new(),
+            message_trace: Vec::new(),
             start_time: chrono::Utc::now(),
             current_swarm_id,
             known_swarms,
@@ -465,6 +522,20 @@ impl OpenSwarmConnector {
             NetworkEvent::MessageReceived { topic, data, source, .. } => {
                 {
                     let mut state = self.state.write().await;
+                    let decoded = serde_json::from_slice::<SwarmMessage>(&data).ok();
+                    let task_id = decoded
+                        .as_ref()
+                        .and_then(|m| m.params.get("task_id").and_then(|v| v.as_str()).map(|s| s.to_string()));
+                    state.push_message_trace(MessageTraceEvent {
+                        timestamp: chrono::Utc::now(),
+                        direction: "inbound".to_string(),
+                        peer: Some(source.to_string()),
+                        topic: topic.clone(),
+                        method: decoded.as_ref().map(|m| m.method.clone()),
+                        task_id,
+                        size_bytes: data.len(),
+                        outcome: "received".to_string(),
+                    });
                     state.push_log(
                         LogCategory::Message,
                         format!("Message received on {} from {}", topic, source),
@@ -481,7 +552,9 @@ impl OpenSwarmConnector {
                     LogCategory::Peer,
                     format!("Connected: {}", peer),
                 );
-                state.network_stats.total_agents = state.active_member_count(Duration::from_secs(180)) as u64;
+                state.network_stats.total_agents = state
+                    .active_member_count(Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS))
+                    as u64;
             }
             NetworkEvent::PeerDisconnected(peer) => {
                 tracing::debug!(peer = %peer, "Peer disconnected");
@@ -504,7 +577,7 @@ impl OpenSwarmConnector {
         &self,
         topic: &str,
         data: &[u8],
-        _source: openswarm_network::PeerId,
+        source: openswarm_network::PeerId,
     ) {
         let message: SwarmMessage = match serde_json::from_slice(data) {
             Ok(m) => m,
@@ -515,6 +588,16 @@ impl OpenSwarmConnector {
                     LogCategory::Error,
                     format!("Failed to parse message on {}: {}", topic, e),
                 );
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "inbound".to_string(),
+                    peer: Some(source.to_string()),
+                    topic: topic.to_string(),
+                    method: None,
+                    task_id: None,
+                    size_bytes: data.len(),
+                    outcome: "parse_error".to_string(),
+                });
                 return;
             }
         };
@@ -524,24 +607,60 @@ impl OpenSwarmConnector {
                 if let Ok(params) = serde_json::from_value::<KeepAliveParams>(message.params) {
                     let mut state = self.state.write().await;
                     state.succession.record_keepalive(&params.agent_id);
-                    state.mark_member_seen(params.agent_id.as_str());
-                    let active_members = state.active_member_ids(Duration::from_secs(180));
+                    state.mark_member_seen_with_name(
+                        params.agent_id.as_str(),
+                        params.agent_name.as_deref(),
+                    );
+                    if let Some(ts) = params.last_task_poll_at {
+                        state
+                            .member_last_task_poll
+                            .insert(params.agent_id.to_string(), ts);
+                    }
+                    if let Some(ts) = params.last_result_at {
+                        state.member_last_result.insert(params.agent_id.to_string(), ts);
+                    }
+                    let active_members =
+                        state.active_member_ids(Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS));
                     Self::recompute_hierarchy_from_members(&mut state, &active_members);
                     state.push_log(
                         LogCategory::Message,
-                        format!("KeepAlive from {}", params.agent_id),
+                        format!(
+                            "KeepAlive from {}",
+                            params
+                                .agent_name
+                                .clone()
+                                .unwrap_or_else(|| params.agent_id.to_string())
+                        ),
                     );
                 }
             }
             Some(ProtocolMethod::AgentKeepAlive) => {
                 if let Ok(params) = serde_json::from_value::<KeepAliveParams>(message.params) {
                     let mut state = self.state.write().await;
-                    state.mark_member_seen(params.agent_id.as_str());
-                    let active_members = state.active_member_ids(Duration::from_secs(180));
+                    state.mark_member_seen_with_name(
+                        params.agent_id.as_str(),
+                        params.agent_name.as_deref(),
+                    );
+                    if let Some(ts) = params.last_task_poll_at {
+                        state
+                            .member_last_task_poll
+                            .insert(params.agent_id.to_string(), ts);
+                    }
+                    if let Some(ts) = params.last_result_at {
+                        state.member_last_result.insert(params.agent_id.to_string(), ts);
+                    }
+                    let active_members =
+                        state.active_member_ids(Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS));
                     Self::recompute_hierarchy_from_members(&mut state, &active_members);
                     state.push_log(
                         LogCategory::System,
-                        format!("Agent heartbeat: {}", params.agent_id),
+                        format!(
+                            "Agent heartbeat: {}",
+                            params
+                                .agent_name
+                                .clone()
+                                .unwrap_or_else(|| params.agent_id.to_string())
+                        ),
                     );
                 }
             }
@@ -676,65 +795,76 @@ impl OpenSwarmConnector {
                     );
 
                     let swarm_id = state.current_swarm_id.as_str().to_string();
-                    let should_auto_plan = is_coordinator;
-                    let injected_task = params.task.clone();
                     drop(state);
 
                     self.subscribe_task_flow_topics(&swarm_id, &task_id).await;
-
-                    // Fallback auto-planning keeps task flow moving when external
-                    // agents fail to propose in time.
-                    if should_auto_plan {
-                        Self::do_generate_and_propose_plan(
-                            &injected_task,
-                            &self.state,
-                            &self.network_handle,
-                            &self.config,
-                        )
-                        .await;
-                    }
                 }
             }
             Some(ProtocolMethod::TaskAssignment) => {
                 if let Ok(params) = serde_json::from_value::<TaskAssignmentParams>(message.params) {
                     let mut state = self.state.write().await;
-                    if params.assignee == state.agent_id {
-                        let mut task = params.task.clone();
-                        task.status = TaskStatus::InProgress;
-                        task.assigned_to = Some(params.assignee.clone());
+                    let mut task = params.task.clone();
+                    task.assigned_to = Some(params.assignee.clone());
+                    task.status = TaskStatus::InProgress;
 
-                        state.task_set.add(params.task.task_id.clone());
-                        state
-                            .task_details
-                            .insert(params.task.task_id.clone(), task);
-                        state.mark_member_seen(params.assignee.as_str());
-                        state.push_task_timeline_event(
-                            &params.task.task_id,
-                            "assigned",
-                            format!(
-                                "Assigned by plan {} under parent {}",
-                                params.winning_plan_id, params.parent_task_id
-                            ),
-                            Some(params.assignee.to_string()),
-                        );
-                        state.push_log(
-                            LogCategory::Task,
+                    let task_id = task.task_id.clone();
+                    let parent_task_id = params.parent_task_id.clone();
+                    let assigned_here = params.assignee == state.agent_id;
+
+                    if let Some(existing) = state.task_details.get(&task_id) {
+                        if matches!(existing.status, TaskStatus::Completed) {
+                            task.status = TaskStatus::Completed;
+                        }
+                    }
+
+                    state.task_details.insert(task_id.clone(), task);
+                    if let Some(parent) = state.task_details.get_mut(&parent_task_id) {
+                        if !parent.subtasks.iter().any(|id| id == &task_id) {
+                            parent.subtasks.push(task_id.clone());
+                        }
+                    }
+                    if assigned_here {
+                        state.task_set.add(task_id.clone());
+                    }
+
+                    state.mark_member_seen(params.assignee.as_str());
+                    state.push_task_timeline_event(
+                        &task_id,
+                        if assigned_here { "assigned" } else { "assignment_observed" },
+                        format!(
+                            "Assigned by plan {} under parent {}",
+                            params.winning_plan_id, params.parent_task_id
+                        ),
+                        Some(params.assignee.to_string()),
+                    );
+                    state.push_log(
+                        LogCategory::Task,
+                        if assigned_here {
                             format!(
                                 "Task assigned: {} to {} (plan={}, parent={})",
-                                params.task.task_id,
-                                params.assignee,
-                                params.winning_plan_id,
-                                params.parent_task_id
-                            ),
-                        );
+                                task_id, params.assignee, params.winning_plan_id, params.parent_task_id
+                            )
+                        } else {
+                            format!(
+                                "Task assignment observed: {} -> {} (plan={}, parent={})",
+                                task_id, params.assignee, params.winning_plan_id, params.parent_task_id
+                            )
+                        },
+                    );
+                    state.push_log(
+                        LogCategory::System,
+                        format!(
+                            "AUDIT assignment.observe task_id={} assignee={} parent={} local_assignee={}",
+                            task_id,
+                            params.assignee,
+                            params.parent_task_id,
+                            assigned_here
+                        ),
+                    );
 
-                        let swarm_id = state.current_swarm_id.as_str().to_string();
-                        let task_id = params.task.task_id.clone();
-                        let assigned_task = params.task.clone();
-                        drop(state);
-                        self.subscribe_task_flow_topics(&swarm_id, &task_id).await;
-                        self.auto_submit_result_for_task(&assigned_task).await;
-                    }
+                    let swarm_id = state.current_swarm_id.as_str().to_string();
+                    drop(state);
+                    self.subscribe_task_flow_topics(&swarm_id, &task_id).await;
                 }
             }
             Some(ProtocolMethod::ProposalCommit) => {
@@ -745,10 +875,35 @@ impl OpenSwarmConnector {
                     if let Some(task) = state.task_details.get_mut(&params.task_id) {
                         task.status = TaskStatus::ProposalPhase;
                     }
-                    if let Some(rfp) = state.rfp_coordinators.get_mut(&params.task_id) {
-                        if let Err(e) = rfp.record_commit(&params) {
-                            tracing::warn!(error = %e, "Failed to record proposal commit");
-                        }
+                    let injected_task = state
+                        .task_details
+                        .get(&params.task_id)
+                        .cloned()
+                        .unwrap_or(Task {
+                            task_id: params.task_id.clone(),
+                            parent_task_id: None,
+                            epoch: params.epoch,
+                            status: TaskStatus::Pending,
+                            description: "Observed proposal commit".to_string(),
+                            assigned_to: None,
+                            tier_level: 1,
+                            subtasks: Vec::new(),
+                            created_at: chrono::Utc::now(),
+                            deadline: None,
+                        });
+                    let rfp = state
+                        .rfp_coordinators
+                        .entry(params.task_id.clone())
+                        .or_insert_with(|| {
+                            RfpCoordinator::new(params.task_id.clone(), params.epoch, 1)
+                        });
+                    if matches!(rfp.phase(), openswarm_consensus::rfp::RfpPhase::Idle) {
+                        let _ = rfp.inject_task(&injected_task);
+                    }
+                    if let Err(e) = rfp.record_commit(&params) {
+                        tracing::warn!(error = %e, "Failed to record proposal commit");
+                    } else if matches!(rfp.phase(), openswarm_consensus::rfp::RfpPhase::CommitPhase) {
+                        let _ = rfp.transition_to_reveal();
                     }
                     state.push_task_timeline_event(
                         &params.task_id,
@@ -765,6 +920,13 @@ impl OpenSwarmConnector {
                             params.plan_hash
                         ),
                     );
+                    state.push_log(
+                        LogCategory::System,
+                        format!(
+                            "AUDIT proposal.commit task_id={} proposer={} hash={}",
+                            params.task_id, params.proposer, params.plan_hash
+                        ),
+                    );
                 }
             }
             Some(ProtocolMethod::ProposalReveal) => {
@@ -772,22 +934,20 @@ impl OpenSwarmConnector {
                     serde_json::from_value::<ProposalRevealParams>(message.params)
                 {
                     let mut state = self.state.write().await;
-                    let subtask_desc = params
-                        .plan
-                        .subtasks
-                        .iter()
-                        .map(|s| format!("{}:{}", s.index, s.description))
-                        .collect::<Vec<_>>();
-
                     state
                         .task_details
                         .entry(params.task_id.clone())
                         .and_modify(|task| {
-                            task.status = TaskStatus::VotingPhase;
-                            task.subtasks = subtask_desc.clone();
+                            if matches!(task.status, TaskStatus::Pending | TaskStatus::ProposalPhase)
+                            {
+                                task.status = TaskStatus::VotingPhase;
+                            }
                         });
 
                     if let Some(rfp) = state.rfp_coordinators.get_mut(&params.task_id) {
+                        if matches!(rfp.phase(), openswarm_consensus::rfp::RfpPhase::CommitPhase) {
+                            let _ = rfp.transition_to_reveal();
+                        }
                         if let Err(e) = rfp.record_reveal(&params) {
                             tracing::warn!(error = %e, "Failed to record proposal reveal");
                         }
@@ -805,7 +965,22 @@ impl OpenSwarmConnector {
                             params.task_id,
                             params.plan.proposer,
                             params.plan.subtasks.len(),
-                            subtask_desc.join(" | ")
+                            params
+                                .plan
+                                .subtasks
+                                .iter()
+                                .map(|s| format!("{}:{}", s.index, s.description))
+                                .collect::<Vec<_>>()
+                                .join(" | ")
+                        ),
+                    );
+                    state.push_log(
+                        LogCategory::System,
+                        format!(
+                            "AUDIT proposal.reveal task_id={} proposer={} subtasks={}",
+                            params.task_id,
+                            params.plan.proposer,
+                            params.plan.subtasks.len()
                         ),
                     );
                 }
@@ -860,6 +1035,8 @@ impl OpenSwarmConnector {
                         task.status = TaskStatus::Completed;
                         task.assigned_to = Some(params.agent_id.clone());
                     }
+                    state.task_set.remove(&params.task_id);
+                    state.mark_member_submitted_result(params.agent_id.as_str());
                     state.mark_member_seen(params.agent_id.as_str());
                     // Store the artifact content CID as leaf content bytes in the DAG.
                     state.merkle_dag.add_leaf(
@@ -881,6 +1058,13 @@ impl OpenSwarmConnector {
                             params.agent_id,
                             params.artifact.artifact_id,
                             dag_nodes
+                        ),
+                    );
+                    state.push_log(
+                        LogCategory::System,
+                        format!(
+                            "AUDIT result.observe task_id={} agent={} artifact={}",
+                            params.task_id, params.agent_id, params.artifact.artifact_id
                         ),
                     );
                 }
@@ -1009,12 +1193,58 @@ impl OpenSwarmConnector {
             let discovery_topic = SwarmTopics::swarm_discovery();
             if let Err(e) = self.network_handle.publish(&discovery_topic, data.clone()).await {
                 tracing::debug!(error = %e, "Failed to publish swarm announcement to discovery topic");
+                let mut state = self.state.write().await;
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "outbound".to_string(),
+                    peer: None,
+                    topic: discovery_topic.clone(),
+                    method: Some(ProtocolMethod::SwarmAnnounce.as_str().to_string()),
+                    task_id: None,
+                    size_bytes: data.len(),
+                    outcome: format!("error: {}", e),
+                });
+            } else {
+                let mut state = self.state.write().await;
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "outbound".to_string(),
+                    peer: None,
+                    topic: discovery_topic.clone(),
+                    method: Some(ProtocolMethod::SwarmAnnounce.as_str().to_string()),
+                    task_id: None,
+                    size_bytes: data.len(),
+                    outcome: "published".to_string(),
+                });
             }
 
             // Publish to the swarm-specific announcement topic.
             let announce_topic = SwarmTopics::swarm_announce(params.swarm_id.as_str());
             if let Err(e) = self.network_handle.publish(&announce_topic, data).await {
                 tracing::debug!(error = %e, "Failed to publish swarm announcement to swarm topic");
+                let mut state = self.state.write().await;
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "outbound".to_string(),
+                    peer: None,
+                    topic: announce_topic,
+                    method: Some(ProtocolMethod::SwarmAnnounce.as_str().to_string()),
+                    task_id: None,
+                    size_bytes: 0,
+                    outcome: format!("error: {}", e),
+                });
+            } else {
+                let mut state = self.state.write().await;
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "outbound".to_string(),
+                    peer: None,
+                    topic: announce_topic,
+                    method: Some(ProtocolMethod::SwarmAnnounce.as_str().to_string()),
+                    task_id: None,
+                    size_bytes: 0,
+                    outcome: "published".to_string(),
+                });
             }
         }
 
@@ -1046,8 +1276,12 @@ impl OpenSwarmConnector {
     async fn send_keepalive(&self) {
         let state = self.state.read().await;
         let swarm_id = state.current_swarm_id.clone();
+        let self_id = state.agent_id.to_string();
         let params = KeepAliveParams {
             agent_id: state.agent_id.clone(),
+            agent_name: Some(self.config.agent.name.clone()),
+            last_task_poll_at: state.member_last_task_poll.get(&self_id).cloned(),
+            last_result_at: state.member_last_result.get(&self_id).cloned(),
             epoch: state.epoch_manager.current_epoch(),
             timestamp: chrono::Utc::now(),
         };
@@ -1063,6 +1297,29 @@ impl OpenSwarmConnector {
             let topic = SwarmTopics::keepalive_for(swarm_id.as_str());
             if let Err(e) = self.network_handle.publish(&topic, data).await {
                 tracing::debug!(error = %e, "Failed to send keepalive");
+                let mut state = self.state.write().await;
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "outbound".to_string(),
+                    peer: None,
+                    topic,
+                    method: Some(ProtocolMethod::KeepAlive.as_str().to_string()),
+                    task_id: None,
+                    size_bytes: 0,
+                    outcome: format!("error: {}", e),
+                });
+            } else {
+                let mut state = self.state.write().await;
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "outbound".to_string(),
+                    peer: None,
+                    topic,
+                    method: Some(ProtocolMethod::KeepAlive.as_str().to_string()),
+                    task_id: None,
+                    size_bytes: 0,
+                    outcome: "published".to_string(),
+                });
             }
         }
     }
@@ -1344,6 +1601,29 @@ impl OpenSwarmConnector {
                     error = %e,
                     "Failed to publish task assignment"
                 );
+                let mut state = self.state.write().await;
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "outbound".to_string(),
+                    peer: None,
+                    topic,
+                    method: Some(ProtocolMethod::TaskAssignment.as_str().to_string()),
+                    task_id: Some(task_id.to_string()),
+                    size_bytes: 0,
+                    outcome: format!("error: {}", e),
+                });
+            } else {
+                let mut state = self.state.write().await;
+                state.push_message_trace(MessageTraceEvent {
+                    timestamp: chrono::Utc::now(),
+                    direction: "outbound".to_string(),
+                    peer: None,
+                    topic,
+                    method: Some(ProtocolMethod::TaskAssignment.as_str().to_string()),
+                    task_id: Some(task_id.to_string()),
+                    size_bytes: 0,
+                    outcome: "published".to_string(),
+                });
             }
         }
 
@@ -1447,67 +1727,12 @@ impl OpenSwarmConnector {
         }
     }
 
-    async fn auto_submit_result_for_task(&self, task: &Task) {
-        use sha2::{Digest, Sha256};
-
-        let agent_id = {
-            let state = self.state.read().await;
-            state.agent_id.clone()
-        };
-
-        let content = format!("auto-executed task {}: {}", task.task_id, task.description);
-        let mut hasher = Sha256::new();
-        hasher.update(content.as_bytes());
-        let hash = format!("{:x}", hasher.finalize());
-
-        let submission = ResultSubmissionParams {
-            task_id: task.task_id.clone(),
-            agent_id: agent_id.clone(),
-            artifact: Artifact {
-                artifact_id: format!("{}-auto-result", task.task_id),
-                task_id: task.task_id.clone(),
-                producer: agent_id,
-                content_cid: hash.clone(),
-                merkle_hash: hash,
-                content_type: "text/plain".to_string(),
-                size_bytes: content.len() as u64,
-                created_at: chrono::Utc::now(),
-            },
-            merkle_proof: Vec::new(),
-        };
-
-        let params = serde_json::to_value(&submission).unwrap_or_default();
-        let _ = crate::rpc_server::handle_submit_result(
-            Some("auto-result".to_string()),
-            &params,
-            &self.state,
-            &self.network_handle,
-        )
-        .await;
-    }
-
     fn recompute_hierarchy_from_members(state: &mut ConnectorState, members: &[String]) {
         if members.is_empty() {
             return;
         }
 
         let swarm_size = members.len() as u64;
-        if swarm_size < 3 {
-            state.my_tier = Tier::Executor;
-            state.network_stats.my_tier = Tier::Executor;
-            state.network_stats.hierarchy_depth = 1;
-            state.network_stats.subordinate_count = 0;
-            return;
-        }
-
-        let layout = match state.pyramid.compute_layout(swarm_size) {
-            Ok(layout) => layout,
-            Err(e) => {
-                tracing::warn!(error = %e, swarm_size, "Failed to compute hierarchy layout");
-                return;
-            }
-        };
-
         let mut sorted_agents = members.to_vec();
         sorted_agents.sort();
 
@@ -1515,61 +1740,79 @@ impl OpenSwarmConnector {
         state.agent_parents.clear();
         state.subordinates.clear();
 
-        for (rank, member_id) in sorted_agents.iter().enumerate() {
-            let tier = state.pyramid.assign_tier(rank, &layout);
-            state.agent_tiers.insert(member_id.clone(), tier);
+        let k = Self::dynamic_branching_factor(swarm_size) as usize;
+        let distribution = openswarm_hierarchy::PyramidAllocator::distribute(swarm_size, k as u64);
+        let tier_sizes: Vec<usize> = distribution.tiers.iter().map(|n| *n as usize).collect();
+        let levels = tier_sizes.len().max(1);
 
-            if tier != Tier::Tier1 {
-                let tier_local_rank = Self::compute_tier_local_rank(rank, &layout);
-                let parent_idx = state.pyramid.compute_parent_index(tier_local_rank);
-                if let Some(parent_id) = sorted_agents.get(parent_idx) {
+        let mut offsets = Vec::with_capacity(levels + 1);
+        offsets.push(0usize);
+        for size in &tier_sizes {
+            let prev = *offsets.last().unwrap_or(&0);
+            offsets.push(prev + *size);
+        }
+
+        for level in 0..levels {
+            let start = offsets[level];
+            let end = *offsets.get(level + 1).unwrap_or(&start);
+            for idx in start..end.min(sorted_agents.len()) {
+                let member_id = sorted_agents[idx].clone();
+                let tier = if levels == 1 {
+                    Tier::Executor
+                } else if level == (levels - 1) {
+                    Tier::Executor
+                } else if level == 0 {
+                    Tier::Tier1
+                } else if level == 1 {
+                    Tier::Tier2
+                } else {
+                    Tier::TierN((level + 1) as u32)
+                };
+                state.agent_tiers.insert(member_id, tier);
+            }
+        }
+
+        for level in 1..levels {
+            let child_start = offsets[level];
+            let child_end = *offsets.get(level + 1).unwrap_or(&child_start);
+            let parent_start = offsets[level - 1];
+            let parent_end = *offsets.get(level).unwrap_or(&parent_start);
+            let parent_count = parent_end.saturating_sub(parent_start);
+
+            if parent_count == 0 {
+                continue;
+            }
+
+            for child_idx in child_start..child_end.min(sorted_agents.len()) {
+                let local_child_idx = child_idx.saturating_sub(child_start);
+                let mut parent_local_idx = local_child_idx / k.max(1);
+                if parent_local_idx >= parent_count {
+                    parent_local_idx = parent_count - 1;
+                }
+                let parent_idx = parent_start + parent_local_idx;
+                if let (Some(child_id), Some(parent_id)) =
+                    (sorted_agents.get(child_idx), sorted_agents.get(parent_idx))
+                {
                     state
                         .agent_parents
-                        .insert(member_id.clone(), parent_id.clone());
+                        .insert(child_id.clone(), parent_id.clone());
                     state
                         .subordinates
                         .entry(parent_id.clone())
                         .or_default()
-                        .push(member_id.clone());
+                        .push(child_id.clone());
                 }
             }
         }
 
-        let coordinator_count = state
-            .agent_tiers
-            .values()
-            .filter(|tier| **tier != Tier::Executor)
-            .count();
-
-        let mut hierarchy_depth = layout.depth;
-
-        // Ensure coordinator emergence for small/partially converged swarms.
-        if coordinator_count == 0 && sorted_agents.len() >= 3 {
-            state.agent_tiers.clear();
-            state.agent_parents.clear();
-            state.subordinates.clear();
-
-            let tier1 = sorted_agents[0].clone();
-            state.agent_tiers.insert(tier1.clone(), Tier::Tier1);
-
-            for member_id in sorted_agents.iter().skip(1) {
-                state.agent_tiers.insert(member_id.clone(), Tier::Executor);
-                state
-                    .agent_parents
-                    .insert(member_id.clone(), tier1.clone());
-                state
-                    .subordinates
-                    .entry(tier1.clone())
-                    .or_default()
-                    .push(member_id.clone());
-            }
-
-            hierarchy_depth = 2;
-        }
-
-        state.network_stats.hierarchy_depth = hierarchy_depth;
+        state.network_stats.hierarchy_depth = levels as u32;
         state.network_stats.total_agents = swarm_size;
-        state.current_layout = Some(layout);
+        state.current_layout = openswarm_hierarchy::PyramidAllocator::new(PyramidConfig {
+            branching_factor: k as u32,
+            max_depth: openswarm_protocol::MAX_HIERARCHY_DEPTH,
+        })
+        .compute_layout(swarm_size)
+        .ok();
 
         let my_id = state.agent_id.as_str().to_string();
         if let Some(my_tier) = state.agent_tiers.get(&my_id).copied() {
@@ -1585,20 +1828,6 @@ impl OpenSwarmConnector {
         }
     }
 
-    fn compute_tier_local_rank(
-        global_rank: usize,
-        layout: &openswarm_hierarchy::pyramid::PyramidLayout,
-    ) -> usize {
-        let mut cumulative = 0;
-        for &count in &layout.agents_per_tier {
-            if global_rank < (cumulative + count as usize) {
-                return global_rank - cumulative;
-            }
-            cumulative += count as usize;
-        }
-        0
-    }
-
     fn tier_to_level(tier: Tier) -> Option<u32> {
         match tier {
             Tier::Tier1 => Some(1),
@@ -1606,6 +1835,11 @@ impl OpenSwarmConnector {
             Tier::TierN(n) => Some(n),
             Tier::Executor => None,
         }
+    }
+
+    fn dynamic_branching_factor(swarm_size: u64) -> u64 {
+        let approx = (swarm_size as f64).sqrt().round() as u64;
+        approx.clamp(3, 10)
     }
 
     /// Get the current network statistics.
@@ -1624,80 +1858,6 @@ impl OpenSwarmConnector {
         self.network_handle.clone()
     }
 
-    /// Generate and propose a plan for a task (Tier-1 only).
-    ///
-    /// This method should only be called for Tier-1 agents. It:
-    /// 1. Uses a MockPlanGenerator to create a decomposition plan
-    /// 2. Submits the plan via the propose_plan RPC method
-    async fn do_generate_and_propose_plan(
-        task: &Task,
-        state: &Arc<RwLock<ConnectorState>>,
-        network_handle: &SwarmHandle,
-        config: &ConnectorConfig,
-    ) {
-        let state_read = state.read().await;
-
-        // Only Tier-1 agents propose plans
-        if state_read.my_tier != Tier::Tier1 {
-            return;
-        }
-
-        let task_id = task.task_id.clone();
-        let agent_id = state_read.agent_id.clone();
-        let epoch = state_read.epoch_manager.current_epoch();
-
-        // Determine number of available subordinates
-        let available_agents = state_read.subordinates
-            .get(state_read.agent_id.as_str())
-            .map(|s| s.len() as u64)
-            .unwrap_or_else(|| {
-                // Fallback: estimate from total members / 10
-                state_read.member_set.len() as u64 / 10
-            });
-
-        let branching_factor = config.hierarchy.branching_factor;
-
-        drop(state_read);
-
-        // Create plan context
-        let context = openswarm_consensus::rfp::PlanContext {
-            task: task.clone(),
-            epoch,
-            available_agents,
-            branching_factor,
-            known_capabilities: vec![],
-        };
-
-        // Use mock planner to generate plan
-        let planner = openswarm_consensus::MockPlanGenerator::new(agent_id);
-
-        match planner.generate_plan(&context).await {
-            Ok(plan) => {
-                // Submit plan via RPC (use handle_propose_plan directly)
-                let params = serde_json::to_value(&plan).unwrap_or_default();
-                let _response = crate::rpc_server::handle_propose_plan(
-                    Some("internal".to_string()),
-                    &params,
-                    state,
-                    network_handle,
-                ).await;
-
-                tracing::info!(
-                    task_id = %task_id,
-                    plan_id = %plan.plan_id,
-                    subtasks = plan.subtasks.len(),
-                    "Plan generated and proposed"
-                );
-            }
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    task_id = %task_id,
-                    "Plan generation failed"
-                );
-            }
-        }
-    }
 }
 
 impl Clone for OpenSwarmConnector {

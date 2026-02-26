@@ -31,6 +31,32 @@ LOCAL_MODEL_PATH=${LOCAL_MODEL_PATH:-./models/gpt-oss-20b.gguf}
 MODEL_NAME=${MODEL_NAME:-arcee-ai/trinity-large-preview:free}
 ZEROCLAW_AUTO_UPDATE=${ZEROCLAW_AUTO_UPDATE:-true}
 
+# Nobel laureate-inspired names used for swarm agents.
+declare -a NOBEL_LAUREATE_NAMES=(
+    "marie-curie" "albert-einstein" "niels-bohr" "max-planck" "werner-heisenberg"
+    "paul-dirac" "erwin-schrodinger" "enrico-fermi" "richard-feynman" "murray-gell-mann"
+    "abdus-salam" "steven-weinberg" "sheldon-glashow" "peter-higgs" "francois-englert"
+    "donna-strickland" "andre-geim" "konstantin-novoselov" "robert-laughlin" "alexei-abrikosov"
+    "vitaly-ginzburg" "serge-haroche" "david-wineland" "klaus-hasselmann" "giorgio-parisi"
+    "syukuro-manabe" "john-bardeen" "walter-brattain" "william-shockley" "charles-townes"
+    "ahmed-zewail" "roald-hoffmann" "linus-pauling" "dorothy-hodgkin" "frances-arnold"
+    "jennifer-doudna" "emmanuelle-charpentier" "roger-penrose" "reinhard-genzel" "andrea-ghez"
+    "paul-romer" "william-nordhaus" "elinor-ostrom" "amartya-sen" "joseph-stiglitz"
+    "paul-krugman" "milton-friedman" "kenneth-arrow" "eugene-fama" "robert-shiller"
+    "daniel-kahneman" "roger-myre-son" "esther-duflo" "abhijit-banerjee" "michael-kremer"
+    "katalin-kariko" "drew-weissman" "tu-youyou" "svante-paabo" "randy-schekman"
+)
+
+nobel_agent_name_for_index() {
+    local idx=$1
+    local total=${#NOBEL_LAUREATE_NAMES[@]}
+    if [ "$idx" -le "$total" ]; then
+        echo "${NOBEL_LAUREATE_NAMES[$((idx-1))]}"
+    else
+        echo "${NOBEL_LAUREATE_NAMES[$(( (idx-1) % total ))]}-$idx"
+    fi
+}
+
 usage() {
     cat << EOF
 ${GREEN}OpenSwarm Multi-Node Manager${NC}
@@ -39,7 +65,7 @@ Usage: $0 <command> [options]
 
 Commands:
     start <N>           Start N connector nodes (default: 3)
-    start-agents <N>    Start N full agents (connector + Claude CLI) (default: 3)
+    start-agents <N>    Start N full agents (connector + <Agent>) (default: 3)
     stop                Stop all running nodes and agents
     status              Show status of all nodes and agents
     test                Run a quick API test on all nodes
@@ -184,11 +210,6 @@ get_peer_id() {
 stop_nodes() {
     init_swarm_dir
 
-    if [ ! -s "$NODES_FILE" ]; then
-        echo -e "${YELLOW}No nodes are currently running.${NC}"
-        return
-    fi
-
     echo -e "${YELLOW}Stopping all OpenSwarm nodes and agents...${NC}"
     echo ""
 
@@ -205,7 +226,7 @@ stop_nodes() {
         else
             # New format: name|connector_pid|claude_pid|p2p_port|rpc_port|files_port
             local claude_pid=$p2p_port_or_claude
-            # Stop Claude CLI agent if running
+            # Stop <Agent> agent if running
             if [ "$claude_pid" != "0" ] && ps -p $claude_pid > /dev/null 2>&1; then
                 echo -e "  Stopping Claude agent for $name (PID: $claude_pid)..."
                 kill $claude_pid 2>/dev/null || true
@@ -217,6 +238,42 @@ stop_nodes() {
             fi
         fi
     done < "$NODES_FILE"
+
+    # Stop dedicated web-console connectors if present.
+    if [ -f "$SWARM_DIR/operator-web-30.pid" ]; then
+        local web30_pid
+        web30_pid=$(cat "$SWARM_DIR/operator-web-30.pid" 2>/dev/null || true)
+        if [ -n "$web30_pid" ] && ps -p $web30_pid > /dev/null 2>&1; then
+            echo -e "  Stopping operator-web-30 (PID: $web30_pid)..."
+            kill $web30_pid 2>/dev/null || true
+        fi
+        rm -f "$SWARM_DIR/operator-web-30.pid"
+    fi
+
+    if [ -f "$SWARM_DIR/operator-web-15.pid" ]; then
+        local web15_pid
+        web15_pid=$(cat "$SWARM_DIR/operator-web-15.pid" 2>/dev/null || true)
+        if [ -n "$web15_pid" ] && ps -p $web15_pid > /dev/null 2>&1; then
+            echo -e "  Stopping operator-web-15 (PID: $web15_pid)..."
+            kill $web15_pid 2>/dev/null || true
+        fi
+        rm -f "$SWARM_DIR/operator-web-15.pid"
+    fi
+
+    # Safety net: terminate orphaned OpenSwarm processes not present in nodes.txt.
+    local orphan_connectors
+    orphan_connectors=$(pgrep -f 'openswarm-connector' || true)
+    if [ -n "$orphan_connectors" ]; then
+        echo -e "  Cleaning orphan connectors: $orphan_connectors"
+        kill $orphan_connectors 2>/dev/null || true
+    fi
+
+    local orphan_zeroclaw
+    orphan_zeroclaw=$(pgrep -f 'zeroclaw-agent.sh' || true)
+    if [ -n "$orphan_zeroclaw" ]; then
+        echo -e "  Cleaning orphan zeroclaw launchers: $orphan_zeroclaw"
+        kill $orphan_zeroclaw 2>/dev/null || true
+    fi
 
     # Wait for processes to terminate
     sleep 1
@@ -289,7 +346,7 @@ show_status() {
                 fi
             fi
 
-            # Check Claude CLI status
+            # Check <Agent> status
             if [ "$claude_pid" != "0" ] && ps -p $claude_pid > /dev/null 2>&1; then
                 claude_status=" ${GREEN}CLI:OK${NC}"
             elif [ "$claude_pid" != "0" ]; then
@@ -351,12 +408,12 @@ test_nodes() {
             echo -e "    Tier: $tier"
             echo -e "    Epoch: $epoch"
 
-            # Check Claude CLI status if present
+            # Check <Agent> status if present
             if [ -n "$claude_pid" ] && [ "$claude_pid" != "0" ]; then
                 if ps -p $claude_pid > /dev/null 2>&1; then
-                    echo -e "  ${GREEN}✓ Claude CLI agent running${NC} (PID: $claude_pid)"
+                    echo -e "  ${GREEN}✓ <Agent> agent running${NC} (PID: $claude_pid)"
                 else
-                    echo -e "  ${RED}✗ Claude CLI agent not running${NC}"
+                    echo -e "  ${RED}✗ <Agent> agent not running${NC}"
                 fi
             fi
         else
@@ -388,11 +445,11 @@ clean_up() {
     echo -e "${GREEN}Cleanup complete.${NC}"
 }
 
-# Start N full agents (connector + Claude CLI)
+# Start N full agents (connector + <Agent>)
 start_agents() {
     local num_agents=${1:-3}
 
-    echo -e "${GREEN}Starting $num_agents OpenSwarm agents (connector + Claude CLI)...${NC}"
+    echo -e "${GREEN}Starting $num_agents OpenSwarm agents (connector + <Agent>)...${NC}"
     echo ""
 
     # Build the connector if not already built
@@ -431,7 +488,8 @@ start_agents() {
     fi
 
     for i in $(seq 1 $num_agents); do
-        local agent_name="swarm-agent-$i"
+        local agent_name
+        agent_name="$(nobel_agent_name_for_index "$i")"
         local log_file="$SWARM_DIR/$agent_name.log"
 
         echo -e "${BLUE}Starting agent $i/$num_agents: $agent_name${NC}"
@@ -508,7 +566,7 @@ start_agents() {
 
         # Start AI agent (Claude Code CLI or Zeroclaw)
         if [ "$AGENT_IMPL" = "zeroclaw" ]; then
-            echo -e "  ${BLUE}Starting Zeroclaw agent (LLM: $LLM_BACKEND)...${NC}"
+            echo -e "  ${BLUE}Starting Zeroclaw agent (LLM: $LLM_BACKEND, model: $MODEL_NAME)...${NC}"
 
             # Check if zeroclaw launcher exists
             if [ ! -f "agent-impl/zeroclaw/zeroclaw-agent.sh" ]; then
@@ -658,9 +716,9 @@ Work autonomously. Run the infinite loop until interrupted."
             else
                 sed -i "s/$agent_name|$connector_pid|0|/$agent_name|$connector_pid|$claude_pid|/" "$NODES_FILE"
             fi
-            echo -e "  ${GREEN}✓${NC} Claude CLI agent started (PID: $claude_pid)"
+            echo -e "  ${GREEN}✓${NC} <Agent> agent started (PID: $claude_pid)"
         else
-            echo -e "  ${RED}✗${NC} Claude CLI agent failed to start (check log: $claude_log_file)"
+            echo -e "  ${RED}✗${NC} <Agent> agent failed to start (check log: $claude_log_file)"
             # Keep connector_pid, set claude_pid to 0 to indicate it's not running
         fi
         fi  # End of agent implementation selection

@@ -35,7 +35,7 @@ The **Open Swarm Connector** is a lightweight sidecar process that runs alongsid
 
 - **JSON-RPC 2.0 API** (TCP :9370) -- for agent communication
 - **HTTP File Server** (:9371) -- serves SKILL.md and onboarding docs to agents
-- **Operator Console** (--console) -- interactive TUI for human operators
+- **Web Console** (HTTP file server root) -- React web app for operators
 
 ## Quick Start
 
@@ -48,8 +48,15 @@ make build
 cp example.env .env
 # Edit .env and set OPENROUTER_API_KEY (or switch to ollama/local)
 
-# Run with operator console
-./target/release/openswarm-connector --console --agent-name "my-agent"
+# One-command demo: 30 agents + dedicated web console + browser open
+./run-30-agents-web.sh
+
+# Stop the 30-agent demo + dedicated console
+./stop-30-agents-web.sh
+
+# Run connector and open web console
+./target/release/openswarm-connector --agent-name "my-agent"
+# open http://127.0.0.1:9371/
 
 # Connect an agent - fetch the skill file, then use the RPC API
 curl http://127.0.0.1:9371/SKILL.md
@@ -85,7 +92,45 @@ Key variables:
 - **CRDT State**: Conflict-free replicated state for zero-coordination consistency
 - **Leader Succession**: Automatic failover within 30 seconds via reputation-based election
 
+## Web App Architecture
+
+The operator web UI is now a standalone React application in `webapp/` (multi-file architecture), built with Vite and served by connector file-server from `webapp/dist`.
+
+```bash
+cd webapp
+npm install
+npm run build
+```
+
+Then run connector and open `http://127.0.0.1:9371/`.
+
 ## Operator Console
+
+The preferred operator surface is now the web app.
+
+```bash
+./openswarm-connector --agent-name "operator"
+# then open http://127.0.0.1:9371/
+```
+
+Web console features:
+- Expandable hierarchy tree with tier + last-seen metadata
+- Voting logs (commits/reveals/plans/ballots)
+- Full peer-to-peer message trace stream for debugging
+- Task submission form + per-task forensic timeline
+- Interactive topology graph (zoom/pan/physics)
+- Live updates over WebSocket (`/api/stream`)
+- UI recommendations panel based on swarm capabilities
+
+Real browser E2E:
+
+```bash
+bash tests/e2e/playwright_ui_e2e.sh
+# real scenario: 30 agents + dedicated web console
+bash tests/e2e/playwright_real_30_agents.sh
+```
+
+## Legacy Terminal Console
 
 The operator console provides an interactive TUI for human operators to manage the swarm:
 
@@ -202,6 +247,7 @@ See [PHASE_6_OLLAMA_SETUP.md](PHASE_6_OLLAMA_SETUP.md) for detailed configuratio
 ```bash
 make build       # Build release binary
 make test        # Run all tests
+E2E_PLAYWRIGHT=1 bash tests/e2e/run_all.sh   # Includes browser UI E2E
 make install     # Install to /usr/local/bin
 make dist        # Create distributable archive
 make help        # Show all make targets

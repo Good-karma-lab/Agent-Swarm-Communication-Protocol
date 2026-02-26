@@ -44,7 +44,7 @@ struct FlowSummary {
 }
 
 /// A log entry for the event log panel.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LogEntry {
     pub timestamp: chrono::DateTime<chrono::Utc>,
     pub category: LogCategory,
@@ -52,7 +52,7 @@ pub struct LogEntry {
 }
 
 /// Category of a log entry, used for coloring and filtering.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum LogCategory {
     Peer,
     Message,

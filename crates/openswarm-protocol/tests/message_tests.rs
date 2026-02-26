@@ -346,6 +346,9 @@ fn result_submission_params_serialization() {
 fn keepalive_params_serialization() {
     let params = KeepAliveParams {
         agent_id: AgentId::new("did:swarm:alive".into()),
+        agent_name: Some("alive".into()),
+        last_task_poll_at: None,
+        last_result_at: None,
         epoch: 105,
         timestamp: chrono::Utc::now(),
     };
