@@ -17,10 +17,12 @@ export default function App() {
   const [voting, setVoting] = useState({ voting: [], rfp: [] })
   const [messages, setMessages] = useState([])
   const [tasks, setTasks] = useState({ tasks: [] })
+  const [agents, setAgents] = useState({ agents: [] })
   const [flow, setFlow] = useState({ counters: {} })
   const [topology, setTopology] = useState({ nodes: [], edges: [] })
   const [taskId, setTaskId] = useState('')
   const [taskTrace, setTaskTrace] = useState({ timeline: [], descendants: [], messages: [] })
+  const [taskVoting, setTaskVoting] = useState({ voting: [], rfp: [] })
   const [description, setDescription] = useState('')
   const [recommendations, setRecommendations] = useState({ recommended_features: [] })
   const [audit, setAudit] = useState({ events: [] })
@@ -30,11 +32,12 @@ export default function App() {
   const [live, setLive] = useState({ active_tasks: 0, known_agents: 0, messages: [], events: [] })
 
   const refresh = useCallback(async () => {
-    const [h, v, m, t, f, tp, r, a, au] = await Promise.all([
+    const [h, v, m, t, ag, f, tp, r, a, au] = await Promise.all([
       api.hierarchy(),
       api.voting(),
       api.messages(),
       api.tasks(),
+      api.agents(),
       api.flow(),
       api.topology(),
       api.recommendations(),
@@ -45,6 +48,7 @@ export default function App() {
     setVoting(v)
     setMessages(m)
     setTasks(t)
+    setAgents(ag)
     setFlow(f)
     setTopology(tp)
     setRecommendations(r)
@@ -84,10 +88,13 @@ export default function App() {
     }
   }
 
-  const loadTrace = async () => {
-    if (!taskId.trim()) return
-    const trace = await api.taskTimeline(taskId)
+  const loadTrace = async (requestedTaskId) => {
+    const effectiveTaskId = (requestedTaskId || taskId || '').trim()
+    if (!effectiveTaskId) return
+    if (requestedTaskId) setTaskId(effectiveTaskId)
+    const [trace, votingDetail] = await Promise.all([api.taskTimeline(effectiveTaskId), api.votingTask(effectiveTaskId)])
     setTaskTrace(trace)
+    setTaskVoting(votingDetail)
   }
 
   return (
@@ -110,11 +117,11 @@ export default function App() {
       />
 
       <main className="main">
-        {tab === 'overview' ? <OverviewPanel flow={flow} live={live} voting={voting} messages={messages} tasks={tasks} /> : null}
+        {tab === 'overview' ? <OverviewPanel flow={flow} live={live} voting={voting} messages={messages} tasks={tasks} agents={agents} /> : null}
         {tab === 'hierarchy' ? <HierarchyTree nodes={hierarchy.nodes} /> : null}
         {tab === 'voting' ? <VotingPanel voting={voting} /> : null}
         {tab === 'messages' ? <MessagesPanel messages={messages} /> : null}
-        {tab === 'task' ? <TaskForensicsPanel taskTrace={taskTrace} /> : null}
+        {tab === 'task' ? <TaskForensicsPanel taskTrace={taskTrace} tasks={tasks.tasks || []} taskId={taskId} setTaskId={setTaskId} loadTrace={loadTrace} taskVoting={taskVoting} /> : null}
         {tab === 'topology' ? <TopologyPanel topology={topology} /> : null}
         {tab === 'audit' ? <AuditPanel audit={audit} /> : null}
         {tab === 'ideas' ? <IdeasPanel recommendations={recommendations} /> : null}

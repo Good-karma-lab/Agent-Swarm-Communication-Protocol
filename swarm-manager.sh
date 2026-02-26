@@ -210,11 +210,6 @@ get_peer_id() {
 stop_nodes() {
     init_swarm_dir
 
-    if [ ! -s "$NODES_FILE" ]; then
-        echo -e "${YELLOW}No nodes are currently running.${NC}"
-        return
-    fi
-
     echo -e "${YELLOW}Stopping all OpenSwarm nodes and agents...${NC}"
     echo ""
 
@@ -243,6 +238,42 @@ stop_nodes() {
             fi
         fi
     done < "$NODES_FILE"
+
+    # Stop dedicated web-console connectors if present.
+    if [ -f "$SWARM_DIR/operator-web-30.pid" ]; then
+        local web30_pid
+        web30_pid=$(cat "$SWARM_DIR/operator-web-30.pid" 2>/dev/null || true)
+        if [ -n "$web30_pid" ] && ps -p $web30_pid > /dev/null 2>&1; then
+            echo -e "  Stopping operator-web-30 (PID: $web30_pid)..."
+            kill $web30_pid 2>/dev/null || true
+        fi
+        rm -f "$SWARM_DIR/operator-web-30.pid"
+    fi
+
+    if [ -f "$SWARM_DIR/operator-web-15.pid" ]; then
+        local web15_pid
+        web15_pid=$(cat "$SWARM_DIR/operator-web-15.pid" 2>/dev/null || true)
+        if [ -n "$web15_pid" ] && ps -p $web15_pid > /dev/null 2>&1; then
+            echo -e "  Stopping operator-web-15 (PID: $web15_pid)..."
+            kill $web15_pid 2>/dev/null || true
+        fi
+        rm -f "$SWARM_DIR/operator-web-15.pid"
+    fi
+
+    # Safety net: terminate orphaned OpenSwarm processes not present in nodes.txt.
+    local orphan_connectors
+    orphan_connectors=$(pgrep -f 'openswarm-connector' || true)
+    if [ -n "$orphan_connectors" ]; then
+        echo -e "  Cleaning orphan connectors: $orphan_connectors"
+        kill $orphan_connectors 2>/dev/null || true
+    fi
+
+    local orphan_zeroclaw
+    orphan_zeroclaw=$(pgrep -f 'zeroclaw-agent.sh' || true)
+    if [ -n "$orphan_zeroclaw" ]; then
+        echo -e "  Cleaning orphan zeroclaw launchers: $orphan_zeroclaw"
+        kill $orphan_zeroclaw 2>/dev/null || true
+    fi
 
     # Wait for processes to terminate
     sleep 1
@@ -535,7 +566,7 @@ start_agents() {
 
         # Start AI agent (Claude Code CLI or Zeroclaw)
         if [ "$AGENT_IMPL" = "zeroclaw" ]; then
-            echo -e "  ${BLUE}Starting Zeroclaw agent (LLM: $LLM_BACKEND)...${NC}"
+            echo -e "  ${BLUE}Starting Zeroclaw agent (LLM: $LLM_BACKEND, model: $MODEL_NAME)...${NC}"
 
             # Check if zeroclaw launcher exists
             if [ ! -f "agent-impl/zeroclaw/zeroclaw-agent.sh" ]; then

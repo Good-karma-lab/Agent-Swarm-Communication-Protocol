@@ -203,6 +203,10 @@ echo -e "${GREEN}║         OpenSwarm Agent Starting...                       �
 echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "${BLUE}Agent Name:${NC}     $AGENT_NAME"
+if [ "$AGENT_IMPL" = "zeroclaw" ]; then
+    echo -e "${BLUE}LLM Backend:${NC}    $LLM_BACKEND"
+    echo -e "${BLUE}Model Name:${NC}     $MODEL_NAME"
+fi
 echo -e "${BLUE}Swarm ID:${NC}       $SWARM_ID"
 echo -e "${BLUE}P2P Port:${NC}       $P2P_PORT"
 echo -e "${BLUE}RPC Port:${NC}       $RPC_PORT"

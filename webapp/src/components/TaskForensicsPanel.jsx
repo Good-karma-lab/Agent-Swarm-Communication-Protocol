@@ -1,13 +1,16 @@
 import { DataSet, Network } from 'vis-network/standalone'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-export default function TaskForensicsPanel({ taskTrace }) {
+export default function TaskForensicsPanel({ taskTrace, tasks, taskId, setTaskId, loadTrace, taskVoting }) {
+  const scrub = (s) => String(s || '').replace(/did:swarm:[A-Za-z0-9]+/g, '[agent]')
   const [index, setIndex] = useState((taskTrace?.timeline || []).length)
   const [playing, setPlaying] = useState(false)
   const dagRef = useRef(null)
   const dagNet = useRef(null)
 
   const timeline = taskTrace?.timeline || []
+  const descendants = taskTrace?.descendants || []
+  const rfp = taskVoting?.rfp?.[0]
 
   useEffect(() => {
     setIndex(timeline.length)
@@ -31,7 +34,6 @@ export default function TaskForensicsPanel({ taskTrace }) {
   useEffect(() => {
     if (!dagRef.current) return
     const root = taskTrace?.task
-    const descendants = taskTrace?.descendants || []
     const nodes = []
     const edges = []
     if (root?.task_id) {
@@ -60,12 +62,68 @@ export default function TaskForensicsPanel({ taskTrace }) {
     return () => {
       if (dagNet.current) dagNet.current.destroy()
     }
-  }, [taskTrace])
+  }, [taskTrace, descendants])
 
   const replayed = useMemo(() => timeline.slice(0, Math.max(0, Math.min(index, timeline.length))), [index, timeline])
 
   return (
     <div className="grid">
+      <div className="card">
+        <h2>All Tasks</h2>
+        <div className="log mono">
+          {(tasks || []).map((t) => (
+            <div key={t.task_id}>
+              <button
+                onClick={() => {
+                  loadTrace(t.task_id)
+                }}
+              >
+                Load
+              </button>{' '}
+              {t.task_id} | {t.status} | tier={t.tier_level} | assigned={scrub(t.assigned_to_name || 'unassigned')}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card">
+        <h2>Task Details</h2>
+        <div className="row" style={{ marginBottom: 8 }}>
+          <input value={taskId} onChange={(e) => setTaskId(e.target.value)} placeholder="task id" style={{ width: '100%' }} />
+          <button onClick={() => loadTrace(taskId)}>Load</button>
+        </div>
+        <div className="log mono">
+          <div>description: {taskTrace?.task?.description || '-'}</div>
+          <div>status: {taskTrace?.task?.status || '-'}</div>
+          <div>tier: {taskTrace?.task?.tier_level ?? '-'}</div>
+          <div>assigned: {scrub(taskTrace?.task?.assigned_to_name || 'unassigned')}</div>
+          <div>subtasks: {(taskTrace?.task?.subtasks || []).length}</div>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2>Plans + Voting</h2>
+        <div className="muted">phase={rfp?.phase || 'n/a'} commits={rfp?.commit_count || 0} reveals={rfp?.reveal_count || 0}</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Plan</th>
+              <th>Proposer</th>
+              <th>Subtasks</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(rfp?.plans || []).map((p) => (
+              <tr key={p.plan_id}>
+                <td className="mono">{p.plan_id}</td>
+                <td>{scrub(p.proposer_name || 'unknown')}</td>
+                <td>{p.subtask_count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
       <div className="card">
         <h2>Task Timeline Replay</h2>
         <div className="row" style={{ marginBottom: 8 }}>
@@ -96,7 +154,7 @@ export default function TaskForensicsPanel({ taskTrace }) {
         <div className="log mono">
           {replayed.map((e, i) => (
             <div key={`${e.timestamp}-${i}`}>
-              [{e.timestamp}] {e.stage} {e.detail}
+              [{e.timestamp}] {e.stage} {scrub(e.detail)}
             </div>
           ))}
         </div>
@@ -104,7 +162,26 @@ export default function TaskForensicsPanel({ taskTrace }) {
 
       <div className="card">
         <h2>Recursive Decomposition/Assignments</h2>
-        <pre className="mono">{JSON.stringify(taskTrace?.descendants || [], null, 2)}</pre>
+        <table>
+          <thead>
+            <tr>
+              <th>Subtask</th>
+              <th>Status</th>
+              <th>Assignee</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            {descendants.map((t) => (
+              <tr key={t.task_id}>
+                <td className="mono">{t.task_id}</td>
+                <td>{t.status}</td>
+                <td>{scrub(t.assigned_to_name || 'unassigned')}</td>
+                <td>{t.has_result ? 'yes' : 'no'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
 
       <div className="card">
@@ -117,15 +194,20 @@ export default function TaskForensicsPanel({ taskTrace }) {
         <div className="log mono">
           {(taskTrace?.messages || []).map((m, i) => (
             <div key={`${m.timestamp}-${i}`}>
-              [{m.timestamp}] {m.topic} {m.method || '-'} {m.outcome}
+              [{m.timestamp}] {m.topic} {m.method || '-'} {scrub(m.outcome)}
             </div>
           ))}
         </div>
       </div>
 
       <div className="card">
-        <h2>Root Task + Aggregation State</h2>
-        <pre className="mono">{JSON.stringify(taskTrace?.task || {}, null, 2)}</pre>
+        <h2>Result Artifact</h2>
+        <div className="log mono">
+          <div>artifact_id: {taskTrace?.result_artifact?.artifact_id || '-'}</div>
+          <div>content_type: {taskTrace?.result_artifact?.content_type || '-'}</div>
+          <div>size_bytes: {taskTrace?.result_artifact?.size_bytes ?? '-'}</div>
+          <div>created_at: {taskTrace?.result_artifact?.created_at || '-'}</div>
+        </div>
       </div>
     </div>
   )

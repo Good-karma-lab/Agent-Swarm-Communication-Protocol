@@ -11,18 +11,25 @@ export default function TopologyPanel({ topology }) {
       nodes: new DataSet(
         (topology?.nodes || []).map((n) => ({
           id: n.id,
-          label: (n.id || '').replace('did:swarm:', ''),
-          color: n.is_self ? '#4fd18b' : n.tier === 'Tier1' ? '#ffca63' : '#7fb8ff',
-          shape: 'dot',
-          size: n.is_self ? 20 : 14
+          label: n.name || (n.id || '').replace('did:swarm:', ''),
+          color:
+            n.tier === 'Root'
+              ? '#f08c5a'
+              : n.is_self
+                ? '#4fd18b'
+                : n.tier === 'Tier1'
+                  ? '#ffca63'
+                  : '#7fb8ff',
+          shape: n.tier === 'Root' ? 'box' : 'dot',
+          size: n.tier === 'Root' ? 24 : n.is_self ? 20 : 14
         }))
       ),
       edges: new DataSet(
         (topology?.edges || []).map((e) => ({
           from: e.source,
           to: e.target,
-          color: e.kind === 'hierarchy' ? '#4d7fb0' : '#37516d',
-          dashes: e.kind !== 'hierarchy'
+          color: e.kind === 'hierarchy' || e.kind === 'root_hierarchy' ? '#4d7fb0' : '#37516d',
+          dashes: e.kind !== 'hierarchy' && e.kind !== 'root_hierarchy'
         }))
       )
     }

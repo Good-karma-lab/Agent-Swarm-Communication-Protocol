@@ -51,7 +51,7 @@ test('renders dashboard and submits task', async ({ page }) => {
   await page.getByRole('button', { name: 'Submit' }).click()
 
   await page.getByRole('button', { name: 'task' }).click()
-  await expect(page.getByText('Task Timeline')).toBeVisible()
+  await expect(page.getByText('Task Timeline Replay')).toBeVisible()
 
   await page.getByRole('button', { name: 'topology' }).click()
   await expect(page.locator('#topologyGraph')).toBeVisible()

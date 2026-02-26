@@ -7,7 +7,7 @@ function TreeNode({ node }) {
       <div className="row mono">
         <button onClick={() => setOpen((v) => !v)}>{node.children?.length ? (open ? '-' : '+') : '·'}</button>
         <span className="pill">{node.tier}</span>
-        <span>{node.agent_id}</span>
+        <span>{node.agent_name || node.agent_id}</span>
         <span className="muted">tasks={node.task_count || 0}</span>
         <span className="muted">seen={node.last_seen_secs ?? 'n/a'}s</span>
       </div>

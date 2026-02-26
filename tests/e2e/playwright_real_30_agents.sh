@@ -3,6 +3,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# Ensure cargo is on PATH in non-interactive shells.
+export PATH="$HOME/.cargo/bin:$PATH"
 if [ -f "$ROOT_DIR/scripts/load-env.sh" ]; then
     # shellcheck disable=SC1091
     source "$ROOT_DIR/scripts/load-env.sh"
@@ -23,7 +26,15 @@ trap cleanup EXIT
 
 ./swarm-manager.sh stop >/dev/null 2>&1 || true
 
+echo "[playwright-real] Building connector binary"
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "[playwright-real] cargo not found in PATH. Install Rust or add cargo to PATH."
+    exit 1
+fi
+cargo build --release -p openswarm-connector >/dev/null
+
 echo "[playwright-real] Starting swarm of 30 agents"
+echo "[playwright-real] LLM backend: ${LLM_BACKEND:-unset}, model: ${MODEL_NAME:-unset}"
 ./swarm-manager.sh start-agents 30
 
 RPC_PORT=$(awk -F'|' 'NR==1 {print $5}' /tmp/openswarm-swarm/nodes.txt)
@@ -69,6 +80,22 @@ npm install >/dev/null
 npx playwright install chromium >/dev/null
 
 echo "[playwright-real] Running browser E2E in headed mode"
-WEB_BASE_URL="http://127.0.0.1:22971" PLAYWRIGHT_HEADED=1 npx playwright test e2e-30-agent-web.spec.js --workers=1
+export WEB_BASE_URL="http://127.0.0.1:22971"
+export PLAYWRIGHT_HEADED=1
+
+if [ -z "${DISPLAY:-}" ]; then
+    if command -v xvfb-run >/dev/null 2>&1; then
+        echo "[playwright-real] No DISPLAY found, using xvfb-run"
+        xvfb-run -a npx playwright test e2e-30-agent-web.spec.js --workers=1
+    else
+        echo "[playwright-real] WARNING: DISPLAY is not set and xvfb-run is missing."
+        echo "[playwright-real] Falling back to headless mode with trace/video artifacts."
+        PLAYWRIGHT_HEADED=0 npx playwright test e2e-30-agent-web.spec.js --workers=1
+    fi
+else
+    npx playwright test e2e-30-agent-web.spec.js --workers=1
+fi
+
+echo "[playwright-real] If failures happen, inspect: tests/playwright/playwright-report/index.html"
 
 echo "[playwright-real] Real 30-agent web E2E PASSED"

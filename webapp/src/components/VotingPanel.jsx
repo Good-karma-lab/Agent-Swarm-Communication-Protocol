@@ -1,4 +1,5 @@
 export default function VotingPanel({ voting }) {
+  const scrub = (s) => String(s || '').replace(/did:swarm:[A-Za-z0-9]+/g, '[agent]')
   return (
     <div className="card">
       <h2>Voting Process Logs</h2>
@@ -19,7 +20,11 @@ export default function VotingPanel({ voting }) {
               <td>{item.phase}</td>
               <td>{item.commit_count}</td>
               <td>{item.reveal_count}</td>
-              <td>{(item.plans || []).map((p) => p.plan_id).join(', ')}</td>
+              <td>
+                {(item.plans || [])
+                  .map((p) => `${p.plan_id} by ${scrub(p.proposer_name || 'unknown')}`)
+                  .join(', ')}
+              </td>
             </tr>
           ))}
         </tbody>

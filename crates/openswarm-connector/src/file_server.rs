@@ -15,9 +15,11 @@ use serde::Deserialize;
 use tokio::sync::RwLock;
 use tower_http::services::{ServeDir, ServeFile};
 
-use openswarm_protocol::{ProtocolMethod, SwarmMessage, SwarmTopics, TaskInjectionParams, Tier};
+use openswarm_protocol::Tier;
 
 use crate::connector::{ConnectorState, MessageTraceEvent};
+
+const ACTIVE_MEMBER_STALENESS_SECS: u64 = 45;
 
 struct EmbeddedDocs {
     skill_md: &'static str,
@@ -83,6 +85,7 @@ impl FileServer {
             .route("/api/messages/:task_id", get(api_messages_task))
             .route("/api/tasks", get(api_tasks).post(api_submit_task))
             .route("/api/tasks/:task_id/timeline", get(api_task_timeline))
+            .route("/api/agents", get(api_agents))
             .route("/api/topology", get(api_topology))
             .route("/api/flow", get(api_flow))
             .route("/api/audit", get(api_audit))
@@ -189,7 +192,7 @@ async fn api_auth_status() -> Json<serde_json::Value> {
 
 async fn api_hierarchy(State(web): State<WebState>) -> Json<serde_json::Value> {
     let s = web.state.read().await;
-    let active = s.active_member_ids(Duration::from_secs(180));
+    let active = collect_known_members(&s);
 
     let mut nodes = Vec::new();
     for agent_id in active {
@@ -218,6 +221,7 @@ async fn api_hierarchy(State(web): State<WebState>) -> Json<serde_json::Value> {
 
         nodes.push(serde_json::json!({
             "agent_id": agent_id,
+            "agent_name": s.agent_names.get(&agent_id).cloned().unwrap_or_else(|| short_agent_label(&agent_id)),
             "tier": format!("{:?}", tier),
             "parent_id": parent_id,
             "task_count": task_count,
@@ -273,8 +277,14 @@ async fn voting_payload(
                 .reveals
                 .values()
                 .map(|p| {
+                    let proposer_id = p.proposer.to_string();
                     serde_json::json!({
-                        "proposer": p.proposer.to_string(),
+                        "proposer": proposer_id,
+                        "proposer_name": s
+                            .agent_names
+                            .get(&p.proposer.to_string())
+                            .cloned()
+                            .unwrap_or_else(|| short_agent_label(&p.proposer.to_string())),
                         "plan_id": p.plan.plan_id,
                         "plan_hash": p.plan_hash,
                         "rationale": p.plan.rationale,
@@ -317,6 +327,8 @@ async fn messages_payload(
         .iter()
         .rev()
         .filter(|m| {
+            is_business_message(m)
+                &&
             task_filter
                 .as_ref()
                 .map(|t| m.task_id.as_ref().map(|id| id == t).unwrap_or(false))
@@ -329,19 +341,39 @@ async fn messages_payload(
 
 async fn api_tasks(State(web): State<WebState>) -> Json<serde_json::Value> {
     let s = web.state.read().await;
-    let tasks = s
-        .task_set
-        .elements()
+    let mut tasks = s
+        .task_details
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    tasks.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    let tasks = tasks
         .into_iter()
-        .map(|task_id| {
-            let task = s.task_details.get(&task_id);
+        .map(|task| {
+            let result = s.task_results.get(&task.task_id);
+            let assigned_to = task.assigned_to.as_ref().map(|a| a.to_string());
+            let assigned_to_name = assigned_to
+                .as_ref()
+                .map(|id| {
+                    s.agent_names
+                        .get(id)
+                        .cloned()
+                        .unwrap_or_else(|| short_agent_label(id))
+                });
             serde_json::json!({
-                "task_id": task_id,
-                "description": task.map(|t| t.description.clone()).unwrap_or_default(),
-                "status": task.map(|t| format!("{:?}", t.status)).unwrap_or_else(|| "Unknown".to_string()),
-                "tier_level": task.map(|t| t.tier_level).unwrap_or(0),
-                "assigned_to": task.and_then(|t| t.assigned_to.as_ref().map(|a| a.to_string())),
-                "subtasks": task.map(|t| t.subtasks.clone()).unwrap_or_default(),
+                "task_id": task.task_id,
+                "parent_task_id": task.parent_task_id,
+                "description": task.description,
+                "status": format!("{:?}", task.status),
+                "tier_level": task.tier_level,
+                "assigned_to": assigned_to,
+                "assigned_to_name": assigned_to_name,
+                "subtasks": task.subtasks,
+                "created_at": task.created_at,
+                "deadline": task.deadline,
+                "has_result": result.is_some(),
+                "result_artifact": result,
             })
         })
         .collect::<Vec<_>>();
@@ -380,56 +412,24 @@ async fn api_submit_task(
         );
     }
 
-    let mut state_guard = web.state.write().await;
-    let epoch = state_guard.epoch_manager.current_epoch();
-    let task = openswarm_protocol::Task::new(req.description.clone(), 1, epoch);
-    let task_id = task.task_id.clone();
-    let originator = state_guard.agent_id.clone();
-    let actor = state_guard.agent_id.to_string();
-    let audit_actor = actor.clone();
-    let swarm_id = state_guard.current_swarm_id.as_str().to_string();
+    let params = serde_json::json!({ "description": req.description });
+    let response = crate::rpc_server::handle_inject_task(
+        Some("web-submit-task".to_string()),
+        &params,
+        &web.state,
+        &web.network_handle,
+    )
+    .await;
 
-    state_guard.task_set.add(task_id.clone());
-    state_guard.task_details.insert(task_id.clone(), task.clone());
-    state_guard.push_task_timeline_event(
-        &task_id,
-        "injected",
-        format!("Task injected via web dashboard: {}", req.description),
-        Some(actor),
-    );
-    state_guard.push_log(
-        crate::tui::LogCategory::Task,
-        format!("Task injected via web UI: {} ({})", task_id, req.description),
-    );
-    state_guard.push_log(
-        crate::tui::LogCategory::System,
-        format!(
-            "AUDIT web.submit_task actor={} task_id={} description={}",
-            audit_actor, task_id, req.description
-        ),
-    );
-    drop(state_guard);
-
-    let inject_params = TaskInjectionParams { task, originator };
-    let msg = SwarmMessage::new(
-        ProtocolMethod::TaskInjection.as_str(),
-        serde_json::to_value(&inject_params).unwrap_or_default(),
-        String::new(),
-    );
-
-    if let Ok(data) = serde_json::to_vec(&msg) {
-        let topic = SwarmTopics::tasks_for(&swarm_id, 1);
-        let _ = web.network_handle.publish(&topic, data).await;
+    if let Some(err) = response.error {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": err.message})),
+        );
     }
 
-    (
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "ok": true,
-            "task_id": task_id,
-            "description": req.description
-        })),
-    )
+    let result = response.result.unwrap_or_else(|| serde_json::json!({"ok": true}));
+    (StatusCode::OK, Json(result))
 }
 
 async fn api_task_timeline(
@@ -439,7 +439,30 @@ async fn api_task_timeline(
     let s = web.state.read().await;
 
     let timeline = s.task_timelines.get(&task_id).cloned().unwrap_or_default();
-    let task = s.task_details.get(&task_id).cloned();
+    let task = s.task_details.get(&task_id).cloned().map(|t| {
+        let assigned_to = t.assigned_to.as_ref().map(|a| a.to_string());
+        let assigned_to_name = assigned_to
+            .as_ref()
+            .map(|id| {
+                s.agent_names
+                    .get(id)
+                    .cloned()
+                    .unwrap_or_else(|| short_agent_label(id))
+            });
+        serde_json::json!({
+            "task_id": t.task_id,
+            "parent_task_id": t.parent_task_id,
+            "description": t.description,
+            "status": format!("{:?}", t.status),
+            "tier_level": t.tier_level,
+            "assigned_to": assigned_to,
+            "assigned_to_name": assigned_to_name,
+            "subtasks": t.subtasks,
+            "created_at": t.created_at,
+            "deadline": t.deadline,
+        })
+    });
+    let task_result = s.task_results.get(&task_id).cloned();
     let messages = s
         .message_trace
         .iter()
@@ -447,14 +470,84 @@ async fn api_task_timeline(
         .cloned()
         .collect::<Vec<_>>();
 
-    let descendants = collect_task_descendants(&task_id, &s.task_details);
+    let descendants = collect_task_descendants(&task_id, &s.task_details)
+        .into_iter()
+        .map(|t| {
+            let result = s.task_results.get(&t.task_id).cloned();
+            let assigned_to = t.assigned_to.as_ref().map(|a| a.to_string());
+            let assigned_to_name = assigned_to
+                .as_ref()
+                .map(|id| {
+                    s.agent_names
+                        .get(id)
+                        .cloned()
+                        .unwrap_or_else(|| short_agent_label(id))
+                });
+            serde_json::json!({
+                "task_id": t.task_id,
+                "parent_task_id": t.parent_task_id,
+                "description": t.description,
+                "status": format!("{:?}", t.status),
+                "tier_level": t.tier_level,
+                "assigned_to": assigned_to,
+                "assigned_to_name": assigned_to_name,
+                "subtasks": t.subtasks,
+                "created_at": t.created_at,
+                "deadline": t.deadline,
+                "has_result": result.is_some(),
+                "result_artifact": result,
+            })
+        })
+        .collect::<Vec<_>>();
 
     Json(serde_json::json!({
         "task": task,
+        "result_artifact": task_result,
         "timeline": timeline,
         "descendants": descendants,
         "messages": messages,
     }))
+}
+
+async fn api_agents(State(web): State<WebState>) -> Json<serde_json::Value> {
+    let s = web.state.read().await;
+    let now = chrono::Utc::now();
+    let members = collect_known_members(&s);
+
+    let agents = members
+        .into_iter()
+        .map(|id| {
+            let seen_secs = s
+                .member_last_seen
+                .get(&id)
+                .and_then(|ts| now.signed_duration_since(*ts).to_std().ok())
+                .map(|d| d.as_secs());
+            let last_task_poll_secs = s
+                .member_last_task_poll
+                .get(&id)
+                .and_then(|ts| now.signed_duration_since(*ts).to_std().ok())
+                .map(|d| d.as_secs());
+            let last_result_secs = s
+                .member_last_result
+                .get(&id)
+                .and_then(|ts| now.signed_duration_since(*ts).to_std().ok())
+                .map(|d| d.as_secs());
+
+            serde_json::json!({
+                "agent_id": id,
+                "name": s.agent_names.get(&id).cloned().unwrap_or_else(|| short_agent_label(&id)),
+                "tier": format!("{:?}", s.agent_tiers.get(&id).copied().unwrap_or(Tier::Executor)),
+                "seen_secs": seen_secs,
+                "last_task_poll_secs": last_task_poll_secs,
+                "last_result_secs": last_result_secs,
+                "is_self": id == s.agent_id.to_string(),
+                "connected": seen_secs.map(|v| v <= 60).unwrap_or(false),
+                "loop_active": last_task_poll_secs.map(|v| v <= 120).unwrap_or(false),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Json(serde_json::json!({ "agents": agents }))
 }
 
 fn collect_task_descendants(
@@ -476,18 +569,26 @@ fn collect_task_descendants(
 
 async fn api_topology(State(web): State<WebState>) -> Json<serde_json::Value> {
     let s = web.state.read().await;
-    let members = s.active_member_ids(Duration::from_secs(180));
+    let members = collect_known_members(&s);
 
-    let nodes = members
+    let mut nodes = members
         .iter()
         .map(|id| {
             serde_json::json!({
                 "id": id,
+                "name": s.agent_names.get(id).cloned().unwrap_or_else(|| short_agent_label(id)),
                 "tier": format!("{:?}", s.agent_tiers.get(id).copied().unwrap_or(Tier::Executor)),
                 "is_self": *id == s.agent_id.to_string(),
             })
         })
         .collect::<Vec<_>>();
+
+    nodes.push(serde_json::json!({
+        "id": "zero0",
+        "name": "zero0",
+        "tier": "Root",
+        "is_self": false,
+    }));
 
     let mut edges = s
         .agent_parents
@@ -496,6 +597,16 @@ async fn api_topology(State(web): State<WebState>) -> Json<serde_json::Value> {
             serde_json::json!({"source": parent, "target": child, "kind": "hierarchy"})
         })
         .collect::<Vec<_>>();
+
+    for (id, tier) in &s.agent_tiers {
+        if *tier == Tier::Tier1 && members.iter().any(|m| m == id) {
+            edges.push(serde_json::json!({
+                "source": "zero0",
+                "target": id,
+                "kind": "root_hierarchy"
+            }));
+        }
+    }
 
     for peer in s.agent_set.elements() {
         edges.push(serde_json::json!({
@@ -506,6 +617,46 @@ async fn api_topology(State(web): State<WebState>) -> Json<serde_json::Value> {
     }
 
     Json(serde_json::json!({"nodes": nodes, "edges": edges}))
+}
+
+fn short_agent_label(agent_id: &str) -> String {
+    if let Some(last) = agent_id.split(':').next_back() {
+        if last.len() > 12 {
+            return last[..12].to_string();
+        }
+        return last.to_string();
+    }
+    agent_id.to_string()
+}
+
+fn collect_known_members(s: &ConnectorState) -> Vec<String> {
+    let mut members: Vec<String> = s
+        .agent_tiers
+        .keys()
+        .cloned()
+        .chain(s.member_last_seen.keys().cloned())
+        .collect();
+    members.push(s.agent_id.to_string());
+    members.sort();
+    members.dedup();
+    members
+}
+
+fn is_business_message(msg: &MessageTraceEvent) -> bool {
+    match msg.method.as_deref() {
+        Some(method)
+            if method.contains("keepalive")
+                || method == "swarm.announce"
+                || method == "swarm.join"
+                || method == "swarm.join_response"
+                || method == "swarm.leave"
+                || method == "hierarchy.assign_tier" =>
+        {
+            false
+        }
+        Some(_) => true,
+        None => false,
+    }
 }
 
 async fn api_flow(State(web): State<WebState>) -> Json<serde_json::Value> {
@@ -590,7 +741,7 @@ async fn stream_loop(mut socket: WebSocket, state: Arc<RwLock<ConnectorState>>) 
                 "type": "snapshot",
                 "time": chrono::Utc::now(),
                 "active_tasks": s.task_set.len(),
-                "known_agents": s.active_member_count(Duration::from_secs(180)),
+                "known_agents": s.active_member_count(Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS)),
                 "messages": recent_messages,
                 "events": recent_events,
             })

@@ -37,7 +37,34 @@ cp example.env .env
 
 All shell scripts now share this same LLM config (`scripts/load-env.sh`).
 
-## 2.1 Build standalone React web app
+## 3. Run a 30-Agent Swarm + Console
+
+### One command (recommended)
+
+```bash
+./run-30-agents-web.sh
+
+# stop everything later
+./stop-30-agents-web.sh
+```
+
+This script:
+- starts 30 connectors+agents,
+- starts 1 dedicated web-console connector,
+- opens the console URL in your browser automatically.
+
+### Start 30 agents
+
+```bash
+./swarm-manager.sh start-agents 30
+./swarm-manager.sh status
+```
+
+`swarm-manager.sh start-agents` now auto-assigns Nobel-laureate-inspired agent names
+(e.g. `marie-curie`, `albert-einstein`, `niels-bohr`, ...).
+
+
+## 4 Build standalone React web app
 
 ```bash
 cd webapp
@@ -48,7 +75,7 @@ cd ..
 
 The connector serves this app from `webapp/dist`.
 
-## 3. Start the Connector
+## 5. Start the Connector
 
 ```bash
 # Minimal start - all defaults, auto-discovers peers on LAN
@@ -73,7 +100,7 @@ When the connector starts, three services become available:
 | **File Server** | `127.0.0.1:9371` | Agent onboarding docs (HTTP) |
 | **P2P Network** | Auto-assigned | Swarm mesh (libp2p, auto-discovery) |
 
-## 4. Connect Your Agent
+## 6. Connect Your Agent
 
 ### Step A: Fetch the skill file
 
@@ -89,7 +116,7 @@ Or fetch the machine-readable onboarding manifest:
 curl http://127.0.0.1:9371/agent-onboarding.json
 ```
 
-## 5. Running single AI Agent
+## 7. Running single AI Agent
 
 ### Option A: With Zeroclaw + OpenRouter (recommended)
 
@@ -171,18 +198,6 @@ Start multiple connectors + agents that auto-discover each other on the same LAN
 ./swarm-manager.sh status          # Check all nodes
 ./swarm-manager.sh stop            # Stop all nodes
 ```
-
-## 7. Run a 30-Agent Swarm + Console
-
-### Start 30 agents
-
-```bash
-./swarm-manager.sh start-agents 30
-./swarm-manager.sh status
-```
-
-`swarm-manager.sh start-agents` now auto-assigns Nobel-laureate-inspired agent names
-(e.g. `marie-curie`, `albert-einstein`, `niels-bohr`, ...).
 
 ### Start a dedicated operator web connector
 

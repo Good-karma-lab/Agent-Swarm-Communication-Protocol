@@ -29,6 +29,8 @@ use openswarm_protocol::*;
 
 use crate::connector::{ConnectorState, SwarmRecord, TaskTimelineEvent};
 
+const ACTIVE_MEMBER_STALENESS_SECS: u64 = 45;
+
 /// The JSON-RPC 2.0 server.
 pub struct RpcServer {
     /// TCP listener address.
@@ -392,7 +394,8 @@ async fn handle_get_network_stats(
 ) -> SwarmResponse {
     let state = state.read().await;
     let mut stats = state.network_stats.clone();
-    stats.total_agents = state.active_member_count(Duration::from_secs(180)) as u64;
+    stats.total_agents =
+        state.active_member_count(Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS)) as u64;
 
     SwarmResponse::success(
         id,
@@ -483,6 +486,10 @@ pub(crate) async fn handle_propose_plan(
             );
         }
 
+        if matches!(coordinator.phase(), RfpPhase::CommitPhase) {
+            let _ = coordinator.transition_to_reveal();
+        }
+
         let reveal = ProposalRevealParams {
             task_id: plan.task_id.clone(),
             plan: plan.clone(),
@@ -515,6 +522,16 @@ pub(crate) async fn handle_propose_plan(
             "proposed",
             format!("Plan {} proposed with {} subtasks", plan.plan_id, plan.subtasks.len()),
             Some(plan.proposer.to_string()),
+        );
+        state.push_log(
+            crate::tui::LogCategory::System,
+            format!(
+                "AUDIT plan.propose actor={} task_id={} plan_id={} subtasks={}",
+                plan.proposer,
+                plan.task_id,
+                plan.plan_id,
+                plan.subtasks.len()
+            ),
         );
 
         (
@@ -551,7 +568,10 @@ pub(crate) async fn handle_propose_plan(
     let assignment_payloads: Vec<(String, Vec<u8>)> = {
         let mut state = state.write().await;
         let assignees: Vec<AgentId> = state
-            .active_member_ids(Duration::from_secs(180))
+            .subordinates
+            .get(plan.proposer.as_str())
+            .cloned()
+            .unwrap_or_default()
             .into_iter()
             .map(AgentId::new)
             .collect();
@@ -734,15 +754,14 @@ pub(crate) async fn handle_propose_plan(
             ),
             Some(plan.proposer.to_string()),
         );
-
-        // Fast-path selection for single-plan flows to keep execution moving
-        // when no explicit voting ballots are submitted.
-        state.push_task_timeline_event(
-            &plan.task_id,
-            "plan_selected",
-            format!("Plan {} selected (single-plan fast path)", plan.plan_id),
-            Some(plan.proposer.to_string()),
+        state.push_log(
+            crate::tui::LogCategory::System,
+            format!(
+                "AUDIT assignment.publish actor={} task_id={} assignments={}",
+                plan.proposer, plan.task_id, assignment_published
+            ),
         );
+
     }
 
     SwarmResponse::success(
@@ -867,6 +886,7 @@ pub(crate) async fn handle_submit_result(
             task.status = TaskStatus::Completed;
             task.assigned_to = Some(submission.agent_id.clone());
         }
+        state.task_set.remove(&submission.task_id);
         state.mark_member_seen(submission.agent_id.as_str());
         state.merkle_dag.add_leaf(
             submission.task_id.clone(),
@@ -887,6 +907,13 @@ pub(crate) async fn handle_submit_result(
                 submission.agent_id,
                 submission.artifact.artifact_id,
                 nodes
+            ),
+        );
+        state.push_log(
+            crate::tui::LogCategory::System,
+            format!(
+                "AUDIT result.submit actor={} task_id={} artifact={}",
+                submission.agent_id, submission.task_id, submission.artifact.artifact_id
             ),
         );
 
@@ -916,6 +943,7 @@ pub(crate) async fn handle_submit_result(
                 if let Some(parent) = state.task_details.get_mut(&parent_id) {
                     parent.status = TaskStatus::Completed;
                 }
+                state.task_set.remove(&parent_id);
 
                 // Store aggregated result
                 state.task_results.insert(parent_id.clone(), aggregated_artifact.clone());
@@ -965,8 +993,10 @@ pub(crate) async fn handle_submit_result(
         }
     }
 
-    // Hierarchical propagation: if parent was aggregated and has a grandparent, submit aggregated result
-    if let Some((parent_id, aggregated_artifact, Some(grandparent_id))) = parent_propagation_info {
+    // Hierarchical propagation: if parent was aggregated, submit aggregated result
+    // for the parent task as a normal result event. If a grandparent exists,
+    // recursive propagation will continue in the nested call.
+    if let Some((parent_id, aggregated_artifact, grandparent_id)) = parent_propagation_info {
         let my_agent_id = {
             let state = state.read().await;
             state.agent_id.clone()
@@ -974,7 +1004,7 @@ pub(crate) async fn handle_submit_result(
 
         tracing::info!(
             parent_task_id = %parent_id,
-            grandparent_task_id = %grandparent_id,
+            grandparent_task_id = ?grandparent_id,
             "Propagating aggregated result up hierarchy"
         );
 
@@ -1012,8 +1042,38 @@ async fn handle_receive_task(
     id: Option<String>,
     state: &Arc<RwLock<ConnectorState>>,
 ) -> SwarmResponse {
-    let state = state.read().await;
-    let tasks: Vec<String> = state.task_set.elements();
+    let mut state = state.write().await;
+    let my_id = state.agent_id.clone();
+    state.mark_member_polled_tasks(my_id.as_str());
+    let my_tier = state.my_tier;
+    let my_tier_level = my_tier.depth();
+
+    let mut tasks: Vec<&Task> = state
+        .task_details
+        .values()
+        .filter(|task| {
+            if !state.task_set.contains(&task.task_id) {
+                return false;
+            }
+
+            if matches!(
+                task.status,
+                TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Rejected
+            ) {
+                return false;
+            }
+
+            match my_tier {
+                Tier::Executor => task.assigned_to.as_ref() == Some(&my_id),
+                _ => {
+                    task.tier_level == my_tier_level
+                        && (task.assigned_to.is_none() || task.assigned_to.as_ref() == Some(&my_id))
+                }
+            }
+        })
+        .collect();
+    tasks.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    let tasks: Vec<String> = tasks.into_iter().map(|t| t.task_id.clone()).collect();
 
     SwarmResponse::success(
         id,
@@ -1113,7 +1173,7 @@ async fn handle_get_status(
     state: &Arc<RwLock<ConnectorState>>,
 ) -> SwarmResponse {
     let state = state.read().await;
-    let known_agents = state.active_member_count(Duration::from_secs(180));
+    let known_agents = state.active_member_count(Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS));
 
     SwarmResponse::success(
         id,
@@ -1148,10 +1208,15 @@ async fn handle_register_agent(
         }
     };
 
-    let (known_agents, canonical_agent_id, swarm_id, epoch, hierarchy_assignments) = {
+    let (known_agents, canonical_agent_id, swarm_id, epoch, hierarchy_assignments, announced_name) = {
         let mut state = state.write().await;
         let canonical_agent_id = state.agent_id.to_string();
-        state.mark_member_seen(&canonical_agent_id);
+        let requested_name = if requested_agent_id.starts_with("did:swarm:") {
+            None
+        } else {
+            Some(requested_agent_id.as_str())
+        };
+        state.mark_member_seen_with_name(&canonical_agent_id, requested_name);
         state.push_log(
             crate::tui::LogCategory::System,
             format!(
@@ -1160,85 +1225,122 @@ async fn handle_register_agent(
             ),
         );
 
-        let staleness = Duration::from_secs(180);
+        let staleness = Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS);
         let active_members = state.active_member_ids(staleness);
         let swarm_size = active_members.len() as u64;
         let mut hierarchy_assignments = Vec::new();
 
-        // Threshold: only form hierarchy when we have 5+ agents
-        if swarm_size >= 5 {
-            // Recompute pyramid layout
-            match state.pyramid.compute_layout(swarm_size) {
-                Ok(layout) => {
-                    state.network_stats.hierarchy_depth = layout.depth;
+        if swarm_size >= 2 {
+            let mut sorted_agents: Vec<String> = active_members;
+            sorted_agents.sort();
 
-                    // Assign tiers to all agents based on sorted member list
-                    let mut sorted_agents: Vec<String> = active_members;
-                    sorted_agents.sort(); // Deterministic ordering across all nodes
+            state.agent_tiers.clear();
+            state.agent_parents.clear();
+            state.subordinates.clear();
 
-                    state.agent_tiers.clear();
-                    state.agent_parents.clear();
-                    state.subordinates.clear();
+            let k = dynamic_branching_factor(swarm_size) as usize;
+            let distribution = openswarm_hierarchy::PyramidAllocator::distribute(swarm_size, k as u64);
+            let tier_sizes: Vec<usize> = distribution.tiers.iter().map(|n| *n as usize).collect();
+            let levels = tier_sizes.len().max(1);
 
-                    for (rank, member_id) in sorted_agents.iter().enumerate() {
-                        let tier = state.pyramid.assign_tier(rank, &layout);
-                        state.agent_tiers.insert(member_id.clone(), tier);
+            let mut offsets = Vec::with_capacity(levels + 1);
+            offsets.push(0usize);
+            for size in &tier_sizes {
+                let prev = *offsets.last().unwrap_or(&0);
+                offsets.push(prev + *size);
+            }
 
-                        // Compute parent assignment for non-Tier1 agents
-                        if tier != Tier::Tier1 {
-                            let tier_local_rank = compute_tier_local_rank(rank, &layout);
-                            let parent_idx = state.pyramid.compute_parent_index(tier_local_rank);
-                            if let Some(parent_id) = sorted_agents.get(parent_idx) {
-                                state.agent_parents.insert(member_id.clone(), parent_id.clone());
-
-                                // Track subordinates
-                                state.subordinates
-                                    .entry(parent_id.clone())
-                                    .or_default()
-                                    .push(member_id.clone());
-                            }
-                        }
-
-                        // Collect assignments for broadcast
-                        let parent = state.agent_parents.get(member_id).cloned();
-                        hierarchy_assignments.push((member_id.clone(), tier, parent));
-                    }
-
-                    // Update self tier assignment - extract values first to avoid borrow issues
-                    let my_agent_id = state.agent_id.as_str().to_string();
-                    let my_tier_value = state.agent_tiers.get(&my_agent_id).copied();
-                    let my_parent_id = state.agent_parents.get(&my_agent_id).cloned();
-                    let my_subordinate_count = state.subordinates
-                        .get(&my_agent_id)
-                        .map(|s| s.len())
-                        .unwrap_or(0) as u32;
-
-                    if let Some(my_tier) = my_tier_value {
-                        state.my_tier = my_tier;
-                        state.parent_id = my_parent_id.map(AgentId::new);
-                        state.network_stats.my_tier = my_tier;
-                        state.network_stats.parent_id = state.parent_id.clone();
-                        state.network_stats.subordinate_count = my_subordinate_count;
-                    }
-
-                    let layout_depth = layout.depth;
-                    state.current_layout = Some(layout.clone());
-
-                    if let Some(my_tier) = my_tier_value {
-                        state.push_log(
-                            crate::tui::LogCategory::System,
-                            format!(
-                                "Hierarchy recomputed: {} agents, depth={}, my_tier={:?}",
-                                swarm_size, layout_depth, my_tier
-                            ),
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "Failed to compute pyramid layout");
+            for level in 0..levels {
+                let start = offsets[level];
+                let end = *offsets.get(level + 1).unwrap_or(&start);
+                for idx in start..end.min(sorted_agents.len()) {
+                    let member_id = sorted_agents[idx].clone();
+                    let tier = if levels == 1 {
+                        Tier::Executor
+                    } else if level == (levels - 1) {
+                        Tier::Executor
+                    } else if level == 0 {
+                        Tier::Tier1
+                    } else if level == 1 {
+                        Tier::Tier2
+                    } else {
+                        Tier::TierN((level + 1) as u32)
+                    };
+                    state.agent_tiers.insert(member_id, tier);
                 }
             }
+
+            for level in 1..levels {
+                let child_start = offsets[level];
+                let child_end = *offsets.get(level + 1).unwrap_or(&child_start);
+                let parent_start = offsets[level - 1];
+                let parent_end = *offsets.get(level).unwrap_or(&parent_start);
+                let parent_count = parent_end.saturating_sub(parent_start);
+                if parent_count == 0 {
+                    continue;
+                }
+                for child_idx in child_start..child_end.min(sorted_agents.len()) {
+                    let local_child_idx = child_idx.saturating_sub(child_start);
+                    let mut parent_local_idx = local_child_idx / k.max(1);
+                    if parent_local_idx >= parent_count {
+                        parent_local_idx = parent_count - 1;
+                    }
+                    let parent_idx = parent_start + parent_local_idx;
+                    if let (Some(child_id), Some(parent_id)) =
+                        (sorted_agents.get(child_idx), sorted_agents.get(parent_idx))
+                    {
+                        state.agent_parents.insert(child_id.clone(), parent_id.clone());
+                        state
+                            .subordinates
+                            .entry(parent_id.clone())
+                            .or_default()
+                            .push(child_id.clone());
+                    }
+                }
+            }
+
+            for member_id in &sorted_agents {
+                let tier = state
+                    .agent_tiers
+                    .get(member_id)
+                    .copied()
+                    .unwrap_or(Tier::Executor);
+                let parent = state.agent_parents.get(member_id).cloned();
+                hierarchy_assignments.push((member_id.clone(), tier, parent));
+            }
+
+            let my_agent_id = state.agent_id.as_str().to_string();
+            if let Some(my_tier) = state.agent_tiers.get(&my_agent_id).copied() {
+                state.my_tier = my_tier;
+                state.parent_id = state.agent_parents.get(&my_agent_id).cloned().map(AgentId::new);
+                state.network_stats.my_tier = my_tier;
+                state.network_stats.parent_id = state.parent_id.clone();
+                state.network_stats.subordinate_count = state
+                    .subordinates
+                    .get(&my_agent_id)
+                    .map(|s| s.len())
+                    .unwrap_or(0) as u32;
+            }
+            state.network_stats.hierarchy_depth = levels as u32;
+            state.current_layout = openswarm_hierarchy::PyramidAllocator::new(openswarm_hierarchy::pyramid::PyramidConfig {
+                branching_factor: k as u32,
+                max_depth: openswarm_protocol::MAX_HIERARCHY_DEPTH,
+            })
+            .compute_layout(swarm_size)
+            .ok();
         }
+
+        let announced_name = if let Some(existing) = state.agent_names.get(&canonical_agent_id) {
+            if existing.starts_with("did:swarm:") {
+                None
+            } else {
+                Some(existing.clone())
+            }
+        } else if requested_agent_id.starts_with("did:swarm:") {
+            None
+        } else {
+            Some(requested_agent_id.clone())
+        };
 
         (
             state.active_member_count(staleness),
@@ -1246,12 +1348,16 @@ async fn handle_register_agent(
             state.current_swarm_id.as_str().to_string(),
             state.epoch_manager.current_epoch(),
             hierarchy_assignments,
+            announced_name,
         )
     };
 
     // Publish keepalive
     let keepalive = KeepAliveParams {
         agent_id: AgentId::new(canonical_agent_id.clone()),
+        agent_name: announced_name,
+        last_task_poll_at: None,
+        last_result_at: None,
         epoch,
         timestamp: chrono::Utc::now(),
     };
@@ -1267,13 +1373,14 @@ async fn handle_register_agent(
 
     // Broadcast tier assignments if hierarchy was recomputed
     if !hierarchy_assignments.is_empty() {
+        let branch_size = dynamic_branching_factor(known_agents as u64);
         for (member_id, tier, parent) in hierarchy_assignments {
             let params = TierAssignmentParams {
                 assigned_agent: AgentId::new(member_id),
                 tier,
                 parent_id: parent.map(|p| AgentId::new(p)).unwrap_or_else(|| AgentId::new("root".to_string())),
                 epoch,
-                branch_size: 10, // TODO: get from config
+                branch_size,
             };
 
             let msg = SwarmMessage::new(
@@ -1300,16 +1407,9 @@ async fn handle_register_agent(
     )
 }
 
-/// Helper function to compute tier-local rank from global rank
-fn compute_tier_local_rank(global_rank: usize, layout: &openswarm_hierarchy::pyramid::PyramidLayout) -> usize {
-    let mut cumulative = 0;
-    for &count in &layout.agents_per_tier {
-        if global_rank < (cumulative + count as usize) {
-            return global_rank - cumulative;
-        }
-        cumulative += count as usize;
-    }
-    0
+fn dynamic_branching_factor(swarm_size: u64) -> u64 {
+    let approx = (swarm_size as f64).sqrt().round() as u64;
+    approx.clamp(3, 10)
 }
 
 /// Handle `swarm.list_swarms` - list all known swarms with their info.
@@ -1452,7 +1552,7 @@ async fn handle_join_swarm(
 }
 
 /// Handle `swarm.inject_task` - inject a task into the swarm from the operator/external source.
-async fn handle_inject_task(
+pub(crate) async fn handle_inject_task(
     id: Option<String>,
     params: &serde_json::Value,
     state: &Arc<RwLock<ConnectorState>>,
@@ -1473,8 +1573,6 @@ async fn handle_inject_task(
     let epoch = state_guard.epoch_manager.current_epoch();
     let task = openswarm_protocol::Task::new(description.clone(), 1, epoch);
     let task_id = task.task_id.clone();
-    let my_tier = state_guard.my_tier;
-    let my_agent_id = state_guard.agent_id.clone();
 
     // Add task to the local task set (CRDT).
     state_guard.task_set.add(task_id.clone());
@@ -1491,6 +1589,14 @@ async fn handle_inject_task(
     state_guard.push_log(
         crate::tui::LogCategory::Task,
         format!("Task injected via RPC: {} ({})", task_id, description),
+    );
+    let audit_actor = state_guard.agent_id.to_string();
+    state_guard.push_log(
+        crate::tui::LogCategory::System,
+        format!(
+            "AUDIT task.inject actor={} task_id={} description={}",
+            audit_actor, task_id, description
+        ),
     );
 
     // Publish task injection to the swarm network.
@@ -1529,43 +1635,6 @@ async fn handle_inject_task(
         }
     }
 
-    // Coordinator fallback: if a coordinator injects a task and no external
-    // planner responds, seed a baseline decomposition plan immediately.
-    if my_tier != Tier::Executor {
-        let mut auto_plan = Plan::new(task_id.clone(), my_agent_id, epoch);
-        auto_plan.rationale = "Automatic fallback decomposition for injected task".to_string();
-        auto_plan.estimated_parallelism = 3.0;
-        auto_plan.subtasks = vec![
-            PlanSubtask {
-                index: 1,
-                description: format!("Analyze scope: {}", description),
-                required_capabilities: vec!["analysis".to_string()],
-                estimated_complexity: 0.3,
-            },
-            PlanSubtask {
-                index: 2,
-                description: "Implement core solution".to_string(),
-                required_capabilities: vec!["implementation".to_string()],
-                estimated_complexity: 0.5,
-            },
-            PlanSubtask {
-                index: 3,
-                description: "Validate and summarize results".to_string(),
-                required_capabilities: vec!["validation".to_string()],
-                estimated_complexity: 0.2,
-            },
-        ];
-
-        let auto_plan_params = serde_json::to_value(&auto_plan).unwrap_or_default();
-        let _ = handle_propose_plan(
-            Some("auto-plan".to_string()),
-            &auto_plan_params,
-            state,
-            network_handle,
-        )
-        .await;
-    }
-
     SwarmResponse::success(
         id,
         serde_json::json!({
@@ -1583,7 +1652,7 @@ async fn handle_get_hierarchy(
     state: &Arc<RwLock<ConnectorState>>,
 ) -> SwarmResponse {
     let state = state.read().await;
-    let active_members = state.active_member_ids(Duration::from_secs(180));
+    let active_members = state.active_member_ids(Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS));
 
     let self_agent = serde_json::json!({
         "agent_id": state.agent_id.to_string(),

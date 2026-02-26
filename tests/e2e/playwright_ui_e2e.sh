@@ -10,4 +10,4 @@ cargo build --release -p openswarm-connector >/dev/null
 cd tests/playwright
 npm install >/dev/null
 npx playwright install chromium >/dev/null
-npx playwright test
+npx playwright test webapp.spec.js

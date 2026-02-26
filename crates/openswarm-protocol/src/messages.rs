@@ -187,6 +187,12 @@ pub struct VerificationResultParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeepAliveParams {
     pub agent_id: AgentId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_task_poll_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_result_at: Option<chrono::DateTime<chrono::Utc>>,
     pub epoch: u64,
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }

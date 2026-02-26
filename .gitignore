@@ -50,6 +50,13 @@
 *.swo
 *~
 
+# Node / frontend
+node_modules/
+**/node_modules/
+tests/playwright/playwright-report/
+tests/playwright/test-results/
+tests/playwright/.cache/
+
 # OS
 .DS_Store
 Thumbs.db

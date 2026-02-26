@@ -48,6 +48,12 @@ make build
 cp example.env .env
 # Edit .env and set OPENROUTER_API_KEY (or switch to ollama/local)
 
+# One-command demo: 30 agents + dedicated web console + browser open
+./run-30-agents-web.sh
+
+# Stop the 30-agent demo + dedicated console
+./stop-30-agents-web.sh
+
 # Run connector and open web console
 ./target/release/openswarm-connector --agent-name "my-agent"
 # open http://127.0.0.1:9371/
