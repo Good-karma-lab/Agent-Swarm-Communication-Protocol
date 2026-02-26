@@ -37,6 +37,17 @@ cp example.env .env
 
 All shell scripts now share this same LLM config (`scripts/load-env.sh`).
 
+## 2.1 Build standalone React web app
+
+```bash
+cd webapp
+npm install
+npm run build
+cd ..
+```
+
+The connector serves this app from `webapp/dist`.
+
 ## 3. Start the Connector
 
 ```bash
@@ -199,6 +210,12 @@ In web dashboard, use:
 - Voting tab (plans + vote flow)
 - Messages tab (p2p debug stream)
 - Task tab (decomposition/propagation/aggregation trace)
+
+Run a real headed browser E2E against 30 agents + one web console:
+
+```bash
+bash tests/e2e/playwright_real_30_agents.sh
+```
 
 ### Validate swarm features from RPC
 

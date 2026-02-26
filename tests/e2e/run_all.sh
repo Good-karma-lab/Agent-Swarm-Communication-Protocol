@@ -49,4 +49,11 @@ else
     echo "[e2e] Skipping Playwright UI test (set E2E_PLAYWRIGHT=1 to enable)"
 fi
 
+if [[ "${E2E_PLAYWRIGHT_REAL_30:-0}" == "1" ]]; then
+    echo "[e2e] Running real 30-agent headed Playwright E2E"
+    bash "$SCRIPT_DIR/playwright_real_30_agents.sh"
+else
+    echo "[e2e] Skipping real 30-agent Playwright test (set E2E_PLAYWRIGHT_REAL_30=1 to enable)"
+fi
+
 echo "[e2e] All selected tests passed"

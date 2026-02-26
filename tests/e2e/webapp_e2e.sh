@@ -43,6 +43,7 @@ curl -sf "http://127.0.0.1:22371/" >/dev/null
 curl -sf "http://127.0.0.1:22371/api/hierarchy" >/dev/null
 curl -sf "http://127.0.0.1:22371/api/voting" >/dev/null
 curl -sf "http://127.0.0.1:22371/api/messages" >/dev/null
+curl -sf "http://127.0.0.1:22371/api/audit" >/dev/null
 curl -sf "http://127.0.0.1:22371/api/topology" >/dev/null
 curl -sf "http://127.0.0.1:22371/api/flow" >/dev/null
 

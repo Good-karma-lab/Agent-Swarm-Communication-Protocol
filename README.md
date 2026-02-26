@@ -86,6 +86,18 @@ Key variables:
 - **CRDT State**: Conflict-free replicated state for zero-coordination consistency
 - **Leader Succession**: Automatic failover within 30 seconds via reputation-based election
 
+## Web App Architecture
+
+The operator web UI is now a standalone React application in `webapp/` (multi-file architecture), built with Vite and served by connector file-server from `webapp/dist`.
+
+```bash
+cd webapp
+npm install
+npm run build
+```
+
+Then run connector and open `http://127.0.0.1:9371/`.
+
 ## Operator Console
 
 The preferred operator surface is now the web app.
@@ -103,6 +115,14 @@ Web console features:
 - Interactive topology graph (zoom/pan/physics)
 - Live updates over WebSocket (`/api/stream`)
 - UI recommendations panel based on swarm capabilities
+
+Real browser E2E:
+
+```bash
+bash tests/e2e/playwright_ui_e2e.sh
+# real scenario: 30 agents + dedicated web console
+bash tests/e2e/playwright_real_30_agents.sh
+```
 
 ## Legacy Terminal Console
 

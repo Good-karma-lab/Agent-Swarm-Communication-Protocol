@@ -6,7 +6,7 @@ module.exports = defineConfig({
   timeout: 120000,
   retries: 0,
   use: {
-    headless: true,
-    baseURL: 'http://127.0.0.1:22371'
+    headless: process.env.PLAYWRIGHT_HEADED === '1' ? false : true,
+    baseURL: process.env.WEB_BASE_URL || 'http://127.0.0.1:22371'
   }
 })

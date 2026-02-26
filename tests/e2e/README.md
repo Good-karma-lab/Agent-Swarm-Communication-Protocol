@@ -23,6 +23,11 @@ This directory contains process-level E2E coverage for the connector, console, n
   - Headless browser E2E for React web dashboard
   - Validates rendering, task submit interaction, and topology tab
 
+- `playwright_real_30_agents.sh`
+  - Real end-to-end scenario with `swarm-manager.sh start-agents 30`
+  - Starts a dedicated web console connector and runs Playwright in headed mode
+  - Verifies hierarchy, voting logs, p2p logs, task submission/forensics, topology, and ideas/audit tabs
+
 - `zeroclaw_openrouter_live.sh` (opt-in)
   - Full live flow with ZeroClaw + OpenRouter (`minimax/minimax-m2.5` by default)
   - Requires `OPENROUTER_API_KEY`
@@ -33,6 +38,7 @@ This directory contains process-level E2E coverage for the connector, console, n
   - Runs fault-injection suite only if `E2E_FAULT=1`
   - Runs soak suite only if `E2E_SOAK=1`
   - Runs Playwright UI suite only if `E2E_PLAYWRIGHT=1`
+  - Runs real 30-agent headed Playwright suite only if `E2E_PLAYWRIGHT_REAL_30=1`
 
 - `observability_ui.sh`
   - Operator console/TUI observability smoke coverage

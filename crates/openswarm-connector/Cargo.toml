@@ -30,6 +30,7 @@ clap = { version = "4", features = ["derive"] }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 axum = { version = "0.7", features = ["ws"] }
+tower-http = { version = "0.5", features = ["fs"] }
 
 [dev-dependencies]
 ed25519-dalek = { workspace = true }
