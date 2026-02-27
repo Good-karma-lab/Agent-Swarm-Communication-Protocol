@@ -1,41 +1,28 @@
-function isBusinessMessage(m) {
-  const method = (m?.method || '').toLowerCase()
-  const topic = (m?.topic || '').toLowerCase()
+const SKIP_METHODS = new Set(['keepalive', 'ping', 'pong', 'peer_discovery', 'peer_announce', 'swarm_join', 'swarm_leave'])
+const SKIP_TOPICS  = new Set(['_keepalive', '_discovery', '_internal'])
 
-  if (!method && !topic) return false
-
-  if (
-    method.includes('keepalive') ||
-    method === 'swarm.announce' ||
-    method === 'swarm.join' ||
-    method === 'swarm.join_response' ||
-    method === 'swarm.leave' ||
-    method === 'hierarchy.assign_tier'
-  ) {
-    return false
-  }
-
-  if (
-    topic.includes('/keepalive') ||
-    topic.includes('/swarm/discovery') ||
-    topic.includes('/swarm/public/announce')
-  ) {
-    return false
-  }
-
-  return true
+function scrub(s) {
+  return String(s || '').replace(/did:swarm:[A-Za-z0-9]+/g, m => '[' + m.slice(-6) + ']')
 }
 
 export default function MessagesPanel({ messages }) {
-  const filtered = (messages || []).filter(isBusinessMessage)
+  const filtered = (messages || []).filter(m => {
+    if (SKIP_METHODS.has(m.method)) return false
+    if (SKIP_TOPICS.has(m.topic))   return false
+    return true
+  })
 
   return (
-    <div className="card">
-      <h2>Peer-to-Peer Debug Logs</h2>
-      <div className="log mono">
-        {filtered.map((m, idx) => (
-          <div key={`${m.timestamp}-${idx}`}>
-            [{m.timestamp}] {m.direction} {m.topic} {m.method || '-'} peer={m.peer || '-'} task={m.task_id || '-'} {m.outcome}
+    <div>
+      <div className="detail-section-title">P2P Business Messages ({filtered.length})</div>
+      <div className="log-box" style={{ maxHeight: '70vh' }}>
+        {filtered.length === 0 && <div style={{ color: 'var(--text-dim)' }}>No messages yet.</div>}
+        {filtered.map((m, i) => (
+          <div key={i} style={{ marginBottom: 2 }}>
+            <span style={{ color: 'var(--text-muted)' }}>[{m.timestamp}]</span>{' '}
+            <span style={{ color: 'var(--teal, #00e5b0)' }}>{m.topic}</span>{' '}
+            {m.method && <span style={{ color: '#a78bfa' }}>{m.method}</span>}{' '}
+            {scrub(m.outcome || '')}
           </div>
         ))}
       </div>
