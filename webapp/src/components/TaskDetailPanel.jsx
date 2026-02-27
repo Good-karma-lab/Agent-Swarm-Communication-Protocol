@@ -2,10 +2,6 @@ import { DataSet, Network } from 'vis-network/standalone'
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../api/client'
 
-function scrub(s) {
-  return String(s || '').replace(/did:swarm:[A-Za-z0-9]+/g, '[agent]')
-}
-
 function scrubId(s) {
   return String(s || '').replace(/did:swarm:[A-Za-z0-9]+/g, m => '[' + m.slice(-6) + ']')
 }
@@ -293,7 +289,7 @@ function OverviewTab({ taskTrace, taskVoting }) {
       <div className="detail-meta" style={{ marginBottom: 16 }}>
         <span>Status: <strong>{taskTrace?.task?.status || '—'}</strong></span>
         <span>Tier: <strong>{taskTrace?.task?.tier_level ?? '—'}</strong></span>
-        <span>Assigned: <strong>{scrub(taskTrace?.task?.assigned_to_name || 'unassigned')}</strong></span>
+        <span>Assigned: <strong>{scrubId(taskTrace?.task?.assigned_to_name || 'unassigned')}</strong></span>
         <span>Subtasks: <strong>{(taskTrace?.task?.subtasks || []).length}</strong></span>
       </div>
 
@@ -330,7 +326,7 @@ function OverviewTab({ taskTrace, taskVoting }) {
               <div key={`${e.timestamp}-${i}`}>
                 <span style={{ color: 'var(--text-muted)' }}>[{e.timestamp}]</span>{' '}
                 <span style={{ color: 'var(--teal)' }}>{e.stage}</span>{' '}
-                {scrub(e.detail)}
+                {scrubId(e.detail)}
               </div>
             ))}
           </div>
@@ -352,7 +348,7 @@ function OverviewTab({ taskTrace, taskVoting }) {
                 <tr key={t.task_id}>
                   <td>{t.task_id.slice(0, 10)}…</td>
                   <td>{t.status}</td>
-                  <td>{scrub(t.assigned_to_name || 'unassigned')}</td>
+                  <td>{scrubId(t.assigned_to_name || 'unassigned')}</td>
                   <td>{t.result_text || (t.has_result ? 'captured' : '—')}</td>
                 </tr>
               ))}
@@ -378,7 +374,7 @@ function OverviewTab({ taskTrace, taskVoting }) {
               <div key={i}>
                 <span style={{ color: 'var(--text-muted)' }}>[{m.timestamp}]</span>{' '}
                 <span style={{ color: 'var(--teal)' }}>{m.topic}</span>{' '}
-                {m.method || ''}{' '}{scrub(m.outcome || '')}
+                {m.method || ''}{' '}{scrubId(m.outcome || '')}
               </div>
             ))}
           </div>
