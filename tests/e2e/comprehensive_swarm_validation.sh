@@ -71,7 +71,7 @@ for line in pathlib.Path("/tmp/openswarm-swarm/nodes.txt").read_text().splitline
     if len(parts) >= 5:
         ports.append(parts[4])
 
-tier1_rpc = None
+tier1_rpcs = []
 for port in ports:
     try:
         status = rpc(
@@ -79,40 +79,76 @@ for port in ports:
             {"jsonrpc": "2.0", "method": "swarm.get_status", "params": {}, "id": "s", "signature": ""},
         )
         if status.get("result", {}).get("tier") == "Tier1":
-            tier1_rpc = port
-            break
+            tier1_rpcs.append(port)
     except Exception:
         continue
 
-if not tier1_rpc:
-    raise SystemExit("[validate] could not find Tier1 RPC node")
+tier1_rpcs = sorted(set(tier1_rpcs))
+if not tier1_rpcs:
+    raise SystemExit("[validate] could not find any Tier1 RPC nodes")
 
 injected = post("/api/tasks", {"description": "comprehensive validation task"})
 task_id = injected.get("task_id")
 if not task_id:
     raise SystemExit("[validate] task injection did not return task_id")
 
-plan = {
-    "plan_id": str(uuid.uuid4()),
-    "task_id": task_id,
-    "proposer": "did:swarm:placeholder",
-    "epoch": 1,
-    "subtasks": [
-        {"index": 1, "description": "Collect options", "required_capabilities": ["research"], "estimated_complexity": 0.34},
-        {"index": 2, "description": "Evaluate options", "required_capabilities": ["analysis"], "estimated_complexity": 0.33},
-        {"index": 3, "description": "Write recommendation", "required_capabilities": ["writing"], "estimated_complexity": 0.33},
-    ],
-    "rationale": "Validate recursive decomposition pipeline",
-    "estimated_parallelism": 3,
-    "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
-}
+proposed_plan_ids = []
+for idx, tier1_rpc in enumerate(tier1_rpcs, start=1):
+    plan = {
+        "plan_id": str(uuid.uuid4()),
+        "task_id": task_id,
+        "proposer": "did:swarm:placeholder",
+        "epoch": 1,
+        "subtasks": [
+            {"index": 1, "description": f"Collect options ({idx})", "required_capabilities": ["research"], "estimated_complexity": 0.34},
+            {"index": 2, "description": f"Evaluate options ({idx})", "required_capabilities": ["analysis"], "estimated_complexity": 0.33},
+            {"index": 3, "description": f"Write recommendation ({idx})", "required_capabilities": ["writing"], "estimated_complexity": 0.33},
+        ],
+        "rationale": f"Validate recursive decomposition pipeline proposer-{idx}",
+        "estimated_parallelism": 3,
+        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
 
-proposed = rpc(
-    tier1_rpc,
-    {"jsonrpc": "2.0", "method": "swarm.propose_plan", "params": plan, "id": "p", "signature": ""},
-)
-if proposed.get("error"):
-    raise SystemExit(f"[validate] propose_plan failed: {proposed['error']}")
+    proposed = rpc(
+        tier1_rpc,
+        {"jsonrpc": "2.0", "method": "swarm.propose_plan", "params": plan, "id": f"p{idx}", "signature": ""},
+    )
+    if proposed.get("error"):
+        message = str(proposed["error"].get("message", ""))
+        if "Not in commit phase" in message:
+            continue
+        raise SystemExit(f"[validate] propose_plan failed on {tier1_rpc}: {proposed['error']}")
+    proposed_plan_ids.append(plan["plan_id"])
+
+if not proposed_plan_ids:
+    raise SystemExit("[validate] no plan proposal was accepted")
+
+rankings = proposed_plan_ids[:]
+for idx, tier1_rpc in enumerate(tier1_rpcs, start=1):
+    vote_error = None
+    for _ in range(20):
+        voted = rpc(
+            tier1_rpc,
+            {
+                "jsonrpc": "2.0",
+                "method": "swarm.submit_vote",
+                "params": {"task_id": task_id, "rankings": rankings, "epoch": 1},
+                "id": f"v{idx}",
+                "signature": "",
+            },
+        )
+        if not voted.get("error"):
+            vote_error = None
+            break
+        vote_error = voted["error"]
+        message = str(vote_error.get("message", ""))
+        if "No valid proposals in rankings" in message:
+            time.sleep(1)
+            continue
+        break
+
+    if vote_error is not None:
+        raise SystemExit(f"[validate] submit_vote failed on {tier1_rpc}: {vote_error}")
 
 subtasks = []
 for _ in range(25):

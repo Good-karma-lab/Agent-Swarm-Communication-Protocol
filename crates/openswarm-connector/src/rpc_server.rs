@@ -27,9 +27,10 @@ use tokio::sync::RwLock;
 
 use openswarm_protocol::*;
 
-use crate::connector::{ConnectorState, SwarmRecord, TaskTimelineEvent};
+use crate::connector::{ConnectorState, SwarmRecord, TaskTimelineEvent, TaskVoteRequirement};
 
 const ACTIVE_MEMBER_STALENESS_SECS: u64 = 45;
+const PARTICIPATION_POLL_STALENESS_SECS: u64 = 180;
 
 /// The JSON-RPC 2.0 server.
 pub struct RpcServer {
@@ -211,7 +212,7 @@ async fn handle_submit_vote(
             .unwrap_or_else(|| state.epoch_manager.current_epoch())
     };
 
-    let (voter, swarm_id, ballot_count, proposal_count) = {
+    let (voter, swarm_id, ballot_count, proposal_count, accepted_rankings) = {
         let mut state = state.write().await;
         let voter = state.agent_id.clone();
 
@@ -225,46 +226,68 @@ async fn handle_submit_vote(
             })
             .collect();
 
-        let (ballot_count, proposal_count) = {
+        let (ballot_count, proposal_count, accepted_rankings) = {
             let voting = state.voting_engines.entry(task_id.clone()).or_insert_with(|| {
-                let mut engine = openswarm_consensus::VotingEngine::new(
+                let engine = openswarm_consensus::VotingEngine::new(
                     openswarm_consensus::voting::VotingConfig::default(),
                     task_id.clone(),
                     epoch,
                 );
-                engine.set_proposals(proposals.clone());
                 engine
             });
+            voting.set_proposals(proposals.clone());
 
-            let ranked_vote = RankedVote {
-                voter: voter.clone(),
-                task_id: task_id.clone(),
-                epoch,
-                rankings: rankings.clone(),
-                critic_scores: std::collections::HashMap::new(),
-            };
+            let mut accepted_rankings = rankings.clone();
+            let mut attempts_left = accepted_rankings.len().max(1);
+            loop {
+                let ranked_vote = RankedVote {
+                    voter: voter.clone(),
+                    task_id: task_id.clone(),
+                    epoch,
+                    rankings: accepted_rankings.clone(),
+                    critic_scores: std::collections::HashMap::new(),
+                };
 
-            if let Err(e) = voting.record_vote(ranked_vote) {
-                return SwarmResponse::error(id, -32000, format!("Failed to record vote: {}", e));
+                match voting.record_vote(ranked_vote) {
+                    Ok(()) => break,
+                    Err(openswarm_consensus::ConsensusError::SelfVoteProhibited(_))
+                        if accepted_rankings.len() > 1 && attempts_left > 1 =>
+                    {
+                        accepted_rankings.rotate_left(1);
+                        attempts_left -= 1;
+                    }
+                    Err(e) => {
+                        return SwarmResponse::error(
+                            id,
+                            -32000,
+                            format!("Failed to record vote: {}", e),
+                        );
+                    }
+                }
             }
 
-            (voting.ballot_count(), voting.proposal_count())
+            (
+                voting.ballot_count(),
+                voting.proposal_count(),
+                accepted_rankings,
+            )
         };
 
         state.push_task_timeline_event(
             &task_id,
             "vote_recorded",
-            format!("Vote submitted via RPC: {}", rankings.join(" > ")),
+            format!("Vote submitted via RPC: {}", accepted_rankings.join(" > ")),
             Some(voter.to_string()),
         );
+        state.bump_votes_cast(voter.as_str());
         state.push_log(
             crate::tui::LogCategory::Vote,
-            format!(
-                "Vote submitted for task {} by {} ({})",
-                task_id,
-                voter,
-                rankings.join(" > ")
-            ),
+                format!(
+                    "Vote submitted for task {} by {} ({})",
+                    task_id,
+                    voter,
+                    accepted_rankings.join(" > ")
+                ),
         );
 
         (
@@ -272,6 +295,7 @@ async fn handle_submit_vote(
             state.current_swarm_id.as_str().to_string(),
             ballot_count,
             proposal_count,
+            accepted_rankings,
         )
     };
 
@@ -281,7 +305,7 @@ async fn handle_submit_vote(
             "task_id": task_id,
             "voter": voter,
             "epoch": epoch,
-            "rankings": rankings,
+            "rankings": accepted_rankings,
             "critic_scores": {},
         }),
         String::new(),
@@ -335,11 +359,17 @@ async fn handle_get_voting_state(
         .iter()
         .filter(|(task_id, _)| maybe_task_id.as_ref().map(|t| t == *task_id).unwrap_or(true))
         .map(|(task_id, rfp)| {
+            let plan_ids: Vec<String> = rfp
+                .reveals
+                .values()
+                .map(|r| r.plan.plan_id.clone())
+                .collect();
             serde_json::json!({
                 "task_id": task_id,
                 "phase": format!("{:?}", rfp.phase()),
                 "commit_count": rfp.commit_count(),
                 "reveal_count": rfp.reveal_count(),
+                "plan_ids": plan_ids,
             })
         })
         .collect();
@@ -426,6 +456,14 @@ pub(crate) async fn handle_propose_plan(
         plan.proposer = state.agent_id.clone();
     }
 
+    if plan.subtasks.is_empty() {
+        return SwarmResponse::error(
+            id,
+            -32013,
+            "Plan must include at least one subtask".to_string(),
+        );
+    }
+
     let plan_hash = match openswarm_consensus::RfpCoordinator::compute_plan_hash(&plan) {
         Ok(h) => h,
         Err(e) => {
@@ -437,7 +475,7 @@ pub(crate) async fn handle_propose_plan(
         }
     };
 
-    let (swarm_id, has_task, subtask_count) = {
+    let (swarm_id, has_task, subtask_count, reveals_to_publish) = {
         let mut state = state.write().await;
 
         let task = state.task_details.get(&plan.task_id).cloned().unwrap_or_else(|| Task {
@@ -457,20 +495,16 @@ pub(crate) async fn handle_propose_plan(
             deadline: None,
         });
 
-        let coordinator = state
-            .rfp_coordinators
-            .entry(plan.task_id.clone())
-            .or_insert_with(|| openswarm_consensus::RfpCoordinator::new(plan.task_id.clone(), plan.epoch, 1));
-
-        if matches!(coordinator.phase(), RfpPhase::Idle) {
-            if let Err(e) = coordinator.inject_task(&task) {
-                return SwarmResponse::error(
-                    id,
-                    -32000,
-                    format!("Failed to initialize RFP: {}", e),
-                );
-            }
-        }
+        let task_tier_level = state
+            .task_details
+            .get(&plan.task_id)
+            .map(|t| t.tier_level)
+            .unwrap_or(1);
+        let tier = tier_from_level(task_tier_level);
+        let expected_proposers =
+            active_members_in_tier(&state, tier, Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS))
+                .len()
+                .max(1);
 
         let commit = ProposalCommitParams {
             task_id: plan.task_id.clone(),
@@ -478,28 +512,76 @@ pub(crate) async fn handle_propose_plan(
             epoch: plan.epoch,
             plan_hash: plan_hash.clone(),
         };
-        if let Err(e) = coordinator.record_commit(&commit) {
-            return SwarmResponse::error(
-                id,
-                -32000,
-                format!("Failed to record proposal commit: {}", e),
-            );
-        }
 
-        if matches!(coordinator.phase(), RfpPhase::CommitPhase) {
-            let _ = coordinator.transition_to_reveal();
-        }
+        let reveal_phase_ready = {
+            let coordinator = state
+                .rfp_coordinators
+                .entry(plan.task_id.clone())
+                .or_insert_with(|| {
+                    openswarm_consensus::RfpCoordinator::new(
+                        plan.task_id.clone(),
+                        plan.epoch,
+                        expected_proposers,
+                    )
+                });
 
-        let reveal = ProposalRevealParams {
-            task_id: plan.task_id.clone(),
-            plan: plan.clone(),
+            if matches!(coordinator.phase(), RfpPhase::Idle) {
+                if let Err(e) = coordinator.inject_task(&task) {
+                    return SwarmResponse::error(
+                        id,
+                        -32000,
+                        format!("Failed to initialize RFP: {}", e),
+                    );
+                }
+            }
+
+            if let Err(e) = coordinator.record_commit(&commit) {
+                return SwarmResponse::error(
+                    id,
+                    -32000,
+                    format!("Failed to record proposal commit: {}", e),
+                );
+            }
+
+            matches!(coordinator.phase(), RfpPhase::RevealPhase)
         };
-        if let Err(e) = coordinator.record_reveal(&reveal) {
-            return SwarmResponse::error(
-                id,
-                -32000,
-                format!("Failed to record proposal reveal: {}", e),
-            );
+
+        state
+            .pending_plan_reveals
+            .entry(plan.task_id.clone())
+            .or_default()
+            .insert(plan.proposer.to_string(), plan.clone());
+
+        let mut reveals_to_publish = Vec::new();
+        if reveal_phase_ready {
+            let mut pending_items = state
+                .pending_plan_reveals
+                .remove(&plan.task_id)
+                .unwrap_or_default()
+                .into_iter()
+                .collect::<Vec<(String, Plan)>>();
+            pending_items.sort_by(|a, b| a.0.cmp(&b.0));
+
+            let mut reveal_errors = Vec::new();
+            if let Some(coordinator) = state.rfp_coordinators.get_mut(&plan.task_id) {
+                for (_, pending_plan) in pending_items {
+                    let reveal = ProposalRevealParams {
+                        task_id: plan.task_id.clone(),
+                        plan: pending_plan,
+                    };
+                    if let Err(e) = coordinator.record_reveal(&reveal) {
+                        reveal_errors.push(format!(
+                            "Failed to record deferred proposal reveal for task {}: {}",
+                            plan.task_id, e
+                        ));
+                    } else {
+                        reveals_to_publish.push(reveal);
+                    }
+                }
+            }
+            for err in reveal_errors {
+                state.push_log(crate::tui::LogCategory::Error, err);
+            }
         }
 
         state.push_log(
@@ -538,6 +620,7 @@ pub(crate) async fn handle_propose_plan(
             state.current_swarm_id.as_str().to_string(),
             state.task_details.contains_key(&plan.task_id),
             plan.subtasks.len(),
+            reveals_to_publish,
         )
     };
 
@@ -564,83 +647,54 @@ pub(crate) async fn handle_propose_plan(
         );
     }
 
-    // Materialize subtasks and prepare assignment messages.
-    let assignment_payloads: Vec<(String, Vec<u8>)> = {
+    {
         let mut state = state.write().await;
-        let assignees: Vec<AgentId> = state
-            .subordinates
-            .get(plan.proposer.as_str())
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .map(AgentId::new)
-            .collect();
-        let parent_tier = state
+        let task_tier_level = state
             .task_details
             .get(&plan.task_id)
             .map(|t| t.tier_level)
             .unwrap_or(1);
-        let mut subtask_ids = Vec::with_capacity(plan.subtasks.len());
-        let mut payloads = Vec::new();
+        let tier = tier_from_level(task_tier_level);
+        let tier_members = active_members_in_tier(&state, tier, Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS));
+        let expected = tier_members.len().max(1);
+        state.task_vote_requirements.insert(
+            plan.task_id.clone(),
+            crate::connector::TaskVoteRequirement {
+                expected_proposers: expected,
+                expected_voters: expected,
+                tier_level: task_tier_level,
+            },
+        );
 
-        for (idx, st) in plan.subtasks.iter().enumerate() {
-            let subtask_id = format!("{}-st-{}", plan.task_id, idx + 1);
-            let assignee = if assignees.is_empty() {
-                None
+        let proposal_owners: std::collections::HashMap<String, AgentId> = state
+            .rfp_coordinators
+            .get(&plan.task_id)
+            .map(|rfp| {
+                rfp.reveals
+                    .values()
+                    .map(|r| (r.plan.plan_id.clone(), r.plan.proposer.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let has_proposals = !proposal_owners.is_empty();
+        let voting = state.voting_engines.entry(plan.task_id.clone()).or_insert_with(|| {
+            openswarm_consensus::VotingEngine::new(
+                openswarm_consensus::voting::VotingConfig::default(),
+                plan.task_id.clone(),
+                plan.epoch,
+            )
+        });
+        voting.set_proposals(proposal_owners);
+
+        if let Some(task) = state.task_details.get_mut(&plan.task_id) {
+            task.status = if has_proposals {
+                TaskStatus::VotingPhase
             } else {
-                Some(assignees[idx % assignees.len()].clone())
+                TaskStatus::ProposalPhase
             };
-            let subtask = Task {
-                task_id: subtask_id.clone(),
-                parent_task_id: Some(plan.task_id.clone()),
-                epoch: plan.epoch,
-                status: if assignee.is_some() {
-                    TaskStatus::InProgress
-                } else {
-                    TaskStatus::Pending
-                },
-                description: st.description.clone(),
-                assigned_to: assignee.clone(),
-                tier_level: (parent_tier + 1).min(openswarm_protocol::MAX_HIERARCHY_DEPTH),
-                subtasks: Vec::new(),
-                created_at: chrono::Utc::now(),
-                deadline: None,
-            };
-
-            state.task_details.insert(subtask_id.clone(), subtask.clone());
-            state.push_task_timeline_event(
-                &plan.task_id,
-                "subtask_created",
-                format!("{} -> {}", subtask_id, st.description),
-                assignee.as_ref().map(|a| a.to_string()),
-            );
-            subtask_ids.push(subtask_id.clone());
-
-            if let Some(assignee) = assignee {
-                let assign_params = TaskAssignmentParams {
-                    task: subtask,
-                    assignee,
-                    parent_task_id: plan.task_id.clone(),
-                    winning_plan_id: plan.plan_id.clone(),
-                };
-                let assign_msg = SwarmMessage::new(
-                    ProtocolMethod::TaskAssignment.as_str(),
-                    serde_json::to_value(&assign_params).unwrap_or_default(),
-                    String::new(),
-                );
-                if let Ok(data) = serde_json::to_vec(&assign_msg) {
-                    let topic = SwarmTopics::tasks_for(&swarm_id, assign_params.task.tier_level);
-                    payloads.push((topic, data));
-                }
-            }
         }
-
-        if let Some(parent) = state.task_details.get_mut(&plan.task_id) {
-            parent.subtasks = subtask_ids;
-            parent.status = TaskStatus::InProgress;
-        }
-        payloads
-    };
+    }
 
     let proposals_topic = SwarmTopics::proposals_for(&swarm_id, &plan.task_id);
     let voting_topic = SwarmTopics::voting_for(&swarm_id, &plan.task_id);
@@ -685,16 +739,16 @@ pub(crate) async fn handle_propose_plan(
         }
     };
 
-    let reveal_params = ProposalRevealParams {
+    let current_reveal = ProposalRevealParams {
         task_id: plan.task_id.clone(),
         plan: plan.clone(),
     };
-    let reveal_msg = SwarmMessage::new(
+    let current_reveal_msg = SwarmMessage::new(
         ProtocolMethod::ProposalReveal.as_str(),
-        serde_json::to_value(&reveal_params).unwrap_or_default(),
+        serde_json::to_value(&current_reveal).unwrap_or_default(),
         String::new(),
     );
-    let reveal_data = match serde_json::to_vec(&reveal_msg) {
+    let current_reveal_data = match serde_json::to_vec(&current_reveal_msg) {
         Ok(data) => data,
         Err(e) => {
             return SwarmResponse::error(
@@ -704,7 +758,8 @@ pub(crate) async fn handle_propose_plan(
             );
         }
     };
-    let reveal_published = match network_handle.publish(&proposals_topic, reveal_data).await {
+
+    let mut reveal_published = match network_handle.publish(&proposals_topic, current_reveal_data).await {
         Ok(()) => true,
         Err(e) => {
             tracing::debug!(error = %e, topic = %proposals_topic, "Failed to publish proposal reveal");
@@ -712,28 +767,35 @@ pub(crate) async fn handle_propose_plan(
         }
     };
 
-    let mut assignment_published = 0usize;
-    for (topic, data) in assignment_payloads {
-        if network_handle.publish(&topic, data).await.is_ok() {
-            assignment_published += 1;
+    for reveal_params in reveals_to_publish {
+        let reveal_msg = SwarmMessage::new(
+            ProtocolMethod::ProposalReveal.as_str(),
+            serde_json::to_value(&reveal_params).unwrap_or_default(),
+            String::new(),
+        );
+        let reveal_data = match serde_json::to_vec(&reveal_msg) {
+            Ok(data) => data,
+            Err(e) => {
+                return SwarmResponse::error(
+                    id,
+                    -32000,
+                    format!("Failed to serialize proposal reveal: {}", e),
+                );
+            }
+        };
+        match network_handle.publish(&proposals_topic, reveal_data).await {
+            Ok(()) => {
+                reveal_published = true;
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, topic = %proposals_topic, "Failed to publish proposal reveal");
+            }
         }
     }
 
     {
         let mut state = state.write().await;
-        if let Some(task) = state.task_details.get_mut(&plan.task_id) {
-            // Keep subtask IDs populated by decomposition block.
-            if task.subtasks.is_empty() {
-                task.subtasks = plan
-                    .subtasks
-                    .iter()
-                    .map(|s| format!("{}:{}", s.index, s.description))
-                    .collect();
-            }
-            if task.status != TaskStatus::InProgress {
-                task.status = TaskStatus::VotingPhase;
-            }
-        }
+        state.bump_plans_proposed(plan.proposer.as_str());
         state.push_log(
             crate::tui::LogCategory::Task,
             format!(
@@ -749,17 +811,10 @@ pub(crate) async fn handle_propose_plan(
             &plan.task_id,
             "published",
             format!(
-                "Plan {} published (commit={}, reveal={}, assignments={})",
-                plan.plan_id, commit_published, reveal_published, assignment_published
+                "Plan {} published (commit={}, reveal={})",
+                plan.plan_id, commit_published, reveal_published
             ),
             Some(plan.proposer.to_string()),
-        );
-        state.push_log(
-            crate::tui::LogCategory::System,
-            format!(
-                "AUDIT assignment.publish actor={} task_id={} assignments={}",
-                plan.proposer, plan.task_id, assignment_published
-            ),
         );
 
     }
@@ -774,7 +829,7 @@ pub(crate) async fn handle_propose_plan(
             "commit_published": commit_published,
             "reveal_published": reveal_published,
             "subtasks_created": subtask_count,
-            "assignments_published": assignment_published,
+            "assignments_published": 0,
         }),
     )
 }
@@ -856,6 +911,27 @@ pub(crate) async fn handle_submit_result(
         let mut state = state.write().await;
 
         if let Some(task) = state.task_details.get(&submission.task_id) {
+            if task.assigned_to.as_ref() != Some(&submission.agent_id) {
+                return SwarmResponse::error(
+                    id,
+                    -32012,
+                    format!(
+                        "Result submission ignored for {}: assignee {} is no longer current",
+                        submission.task_id, submission.agent_id
+                    ),
+                );
+            }
+            if task.parent_task_id.is_none() && task.subtasks.is_empty() {
+                return SwarmResponse::error(
+                    id,
+                    -32011,
+                    format!(
+                        "Root result submission blocked for {}: no decomposed subtasks",
+                        submission.task_id
+                    ),
+                );
+            }
+
             if !task.subtasks.is_empty() {
                 let all_subtasks_done = task.subtasks.iter().all(|sub_id| {
                     state
@@ -887,6 +963,8 @@ pub(crate) async fn handle_submit_result(
             task.assigned_to = Some(submission.agent_id.clone());
         }
         state.task_set.remove(&submission.task_id);
+        state.bump_tasks_processed(submission.agent_id.as_str());
+        state.mark_member_submitted_result(submission.agent_id.as_str());
         state.mark_member_seen(submission.agent_id.as_str());
         state.merkle_dag.add_leaf(
             submission.task_id.clone(),
@@ -919,6 +997,13 @@ pub(crate) async fn handle_submit_result(
 
         // Store the result for potential aggregation
         state.task_results.insert(submission.task_id.clone(), submission.artifact.clone());
+        if let Some(content) = params.get("content").and_then(|v| v.as_str()) {
+            if !content.trim().is_empty() {
+                state
+                    .task_result_text
+                    .insert(submission.task_id.clone(), content.to_string());
+            }
+        }
 
         let propagation_info = if let Some(parent_id) = parent_task_id {
             let parent_completed = state
@@ -1412,6 +1497,36 @@ fn dynamic_branching_factor(swarm_size: u64) -> u64 {
     approx.clamp(3, 10)
 }
 
+fn tier_from_level(level: u32) -> Tier {
+    match level {
+        1 => Tier::Tier1,
+        2 => Tier::Tier2,
+        n => Tier::TierN(n),
+    }
+}
+
+fn active_members_in_tier(
+    state: &ConnectorState,
+    tier: Tier,
+    staleness: Duration,
+) -> Vec<String> {
+    let now = chrono::Utc::now();
+    let poll_staleness = Duration::from_secs(PARTICIPATION_POLL_STALENESS_SECS);
+    state
+        .active_member_ids(staleness)
+        .into_iter()
+        .filter(|id| state.agent_tiers.get(id).copied().unwrap_or(Tier::Executor) == tier)
+        .filter(|id| {
+            state
+                .member_last_task_poll
+                .get(id)
+                .and_then(|ts| now.signed_duration_since(*ts).to_std().ok())
+                .map(|age| age <= poll_staleness)
+                .unwrap_or(false)
+        })
+        .collect()
+}
+
 /// Handle `swarm.list_swarms` - list all known swarms with their info.
 async fn handle_list_swarms(
     id: Option<String>,
@@ -1598,6 +1713,43 @@ pub(crate) async fn handle_inject_task(
             audit_actor, task_id, description
         ),
     );
+
+    let my_tier = state_guard.my_tier;
+    let my_level = my_tier.depth();
+    if my_tier != Tier::Executor && my_level == task.tier_level {
+        let expected_participants = state_guard
+            .active_member_ids(Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS))
+            .into_iter()
+            .filter(|id| state_guard.agent_tiers.get(id).copied().unwrap_or(Tier::Executor) == my_tier)
+            .count()
+            .max(1);
+
+        let mut rfp = openswarm_consensus::RfpCoordinator::new(
+            task_id.clone(),
+            epoch,
+            expected_participants,
+        );
+        if let Err(e) = rfp.inject_task(&task) {
+            tracing::warn!(error = %e, task_id = %task_id, "Failed to initialize local RFP on inject");
+        } else {
+            state_guard.rfp_coordinators.insert(task_id.clone(), rfp);
+            state_guard.task_vote_requirements.insert(
+                task_id.clone(),
+                TaskVoteRequirement {
+                    expected_proposers: expected_participants,
+                    expected_voters: expected_participants,
+                    tier_level: task.tier_level,
+                },
+            );
+            state_guard.push_log(
+                crate::tui::LogCategory::Task,
+                format!(
+                    "Local RFP initialized for injected task {} (tier {:?}, expected participants: {})",
+                    task_id, my_tier, expected_participants
+                ),
+            );
+        }
+    }
 
     // Publish task injection to the swarm network.
     let inject_params = TaskInjectionParams {

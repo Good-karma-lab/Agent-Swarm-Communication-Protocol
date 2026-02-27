@@ -190,7 +190,7 @@ impl VotingEngine {
         }
 
         // Self-vote prohibition: voter cannot rank their own plan first.
-        if self.config.prohibit_self_vote {
+        if self.config.prohibit_self_vote && self.proposal_ids.len() > 1 {
             if let Some(first_choice) = vote.rankings.first() {
                 if let Some(proposer) = self.plan_proposers.get(first_choice) {
                     if proposer == &vote.voter {
@@ -371,6 +371,14 @@ impl VotingEngine {
     /// Check if voting has been finalized.
     pub fn is_finalized(&self) -> bool {
         self.finalized
+    }
+
+    /// Debug view of voter IDs that already cast ballots.
+    pub fn voter_ids_for_debug(&self) -> Vec<String> {
+        self.ballots
+            .iter()
+            .map(|b| b.voter.to_string())
+            .collect()
     }
 }
 

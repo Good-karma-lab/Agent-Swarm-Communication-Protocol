@@ -56,16 +56,14 @@ install_llamacpp() {
 
     if [ -d "$LLAMACPP_DIR" ]; then
         echo -e "${YELLOW}llama.cpp already installed at $LLAMACPP_DIR${NC}"
-        return 0
+    else
+        echo "Cloning llama.cpp repository..."
+        git clone https://github.com/ggerganov/llama.cpp "$LLAMACPP_DIR"
     fi
 
-    echo "Cloning llama.cpp repository..."
-    git clone https://github.com/ggerganov/llama.cpp "$LLAMACPP_DIR"
-
-    echo "Building llama.cpp..."
-    cd "$LLAMACPP_DIR"
-    make
-    cd -
+    echo "Building llama.cpp (CMake)..."
+    cmake -S "$LLAMACPP_DIR" -B "$LLAMACPP_DIR/build" -DLLAMA_BUILD_SERVER=ON
+    cmake --build "$LLAMACPP_DIR/build" --config Release -j 2
 
     echo -e "${GREEN}✓ llama.cpp installed successfully${NC}"
 }
@@ -134,8 +132,9 @@ download_model_llamacpp() {
     echo -e "${YELLOW}Downloading Llama-2-7b as fallback (gpt-oss GGUF not available)...${NC}"
 
     # Download a real model (Llama-2-7b as example)
-    wget -c https://huggingface.co/TheBloke/Llama-2-7B-GGUF/resolve/main/llama-2-7b.Q4_K_M.gguf \
-        -O "$MODEL_DIR/gpt-oss-20b.gguf" || {
+    curl -L --fail --retry 3 --retry-delay 2 \
+        "https://huggingface.co/TheBloke/Llama-2-7B-GGUF/resolve/main/llama-2-7b.Q4_K_M.gguf" \
+        -o "$MODEL_DIR/gpt-oss-20b.gguf" || {
         echo -e "${RED}Download failed. You may need to manually download a model.${NC}"
         exit 1
     }
@@ -184,7 +183,16 @@ start_server_ollama() {
 start_server_llamacpp() {
     echo -e "${BLUE}Starting llama.cpp server...${NC}"
 
-    if [ ! -f "$LLAMACPP_DIR/server" ]; then
+    local server_bin=""
+    if [ -f "$LLAMACPP_DIR/server" ]; then
+        server_bin="$LLAMACPP_DIR/server"
+    elif [ -f "$LLAMACPP_DIR/build/bin/llama-server" ]; then
+        server_bin="$LLAMACPP_DIR/build/bin/llama-server"
+    elif [ -f "$LLAMACPP_DIR/build/bin/server" ]; then
+        server_bin="$LLAMACPP_DIR/build/bin/server"
+    fi
+
+    if [ -z "$server_bin" ]; then
         echo -e "${RED}Error: llama.cpp not installed. Run: $0 install --backend llamacpp${NC}"
         exit 1
     fi
@@ -201,16 +209,16 @@ start_server_llamacpp() {
     fi
 
     echo "Starting server on port 8080..."
-    cd "$LLAMACPP_DIR"
-    nohup ./server \
-        -m "../$MODEL_DIR/gpt-oss-20b.gguf" \
+    cd "$ROOT_DIR"
+    nohup "$server_bin" \
+        -m "$ROOT_DIR/$MODEL_DIR/gpt-oss-20b.gguf" \
         --port 8080 \
         --ctx-size 8192 \
+        --parallel 1 \
         --n-gpu-layers 35 \
-        > ../llama-server.log 2>&1 &
+        > "$ROOT_DIR/llama-server.log" 2>&1 &
 
-    echo $! > ../llama-server.pid
-    cd -
+    echo $! > "$ROOT_DIR/llama-server.pid"
 
     echo "Waiting for server to start..."
     for i in {1..30}; do
