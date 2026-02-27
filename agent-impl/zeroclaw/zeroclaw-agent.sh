@@ -44,7 +44,7 @@ Examples:
     # Use Claude API (default)
     $0 --agent-name alice --rpc-port 9370 --llm-backend anthropic
 
-    # Use local model
+    # Use local llama.cpp server
     $0 --agent-name alice --rpc-port 9370 --llm-backend local --model-path ./models/gpt-oss-20b.gguf
 
     # Use Ollama with gpt-oss:20b (recommended)
@@ -176,8 +176,13 @@ case $LLM_BACKEND in
             echo "  wget https://huggingface.co/TheBloke/Llama-2-70B-GGUF/resolve/main/llama-2-70b.Q4_K_M.gguf -O models/llama-2-70b.gguf"
             exit 1
         fi
-        MODEL_NAME="${MODEL_NAME:-local-model}"
-        LLM_ARGS="-p custom:http://127.0.0.1:8080/v1 --model $MODEL_NAME"
+        # Use zeroclaw's first-class llama.cpp provider to avoid custom-provider
+        # API key requirements and extra onboarding state.
+        local_model_id="$(basename "$MODEL_PATH")"
+        if [ -z "$MODEL_NAME" ] || [ "$MODEL_NAME" = "${local_model_id%.gguf}" ]; then
+            MODEL_NAME="$local_model_id"
+        fi
+        LLM_ARGS="-p llamacpp --model $MODEL_NAME"
         ;;
     ollama)
         MODEL_NAME="${MODEL_NAME:-gpt-oss:20b}"
@@ -210,100 +215,33 @@ esac
 # Create instructions file
 INSTRUCTIONS_FILE="/tmp/zeroclaw-instructions-${AGENT_NAME}.txt"
 cat > "$INSTRUCTIONS_FILE" << EOF
-You are an autonomous OpenSwarm agent running in Zeroclaw.
+OpenSwarm worker: run one cycle and exit.
 
-CRITICAL: Run in an INFINITE LOOP until interrupted.
+Agent: $AGENT_NAME
+RPC: 127.0.0.1:$RPC_PORT
 
-Your Agent ID: $AGENT_NAME
-RPC Endpoint: tcp://127.0.0.1:$RPC_PORT
-Skill Documentation: http://127.0.0.1:$FILES_PORT/SKILL.md
+Hard rules:
+- Use shell + nc for all RPC.
+- Never use notification tools (including pushover).
+- Do not ask for confirmation.
+- Do not run your own infinite loop.
 
-INITIALIZATION (run once):
-1. Fetch skill documentation:
-   curl http://127.0.0.1:$FILES_PORT/SKILL.md
+RPC examples:
+- status:   echo '{"jsonrpc":"2.0","method":"swarm.get_status","params":{},"id":"status","signature":""}' | nc 127.0.0.1 $RPC_PORT
+- receive:  echo '{"jsonrpc":"2.0","method":"swarm.receive_task","params":{},"id":"receive","signature":""}' | nc 127.0.0.1 $RPC_PORT
+- get_task: echo '{"jsonrpc":"2.0","method":"swarm.get_task","params":{"task_id":"..."},"id":"task","signature":""}' | nc 127.0.0.1 $RPC_PORT
 
-2. Get your status to learn your canonical DID and tier:
-   echo '{"jsonrpc":"2.0","method":"swarm.get_status","params":{},"id":"status","signature":""}' | nc 127.0.0.1 $RPC_PORT
+Workflow for each pending task:
+1) Read task via swarm.get_task.
+2) If your tier is not Executor:
+   - submit one valid plan via swarm.propose_plan
+   - include 3-6 subtasks, rationale, estimated_parallelism, epoch
+   - then call swarm.get_voting_state and submit vote via swarm.submit_vote
+3) If your tier is Executor:
+   - execute the task and produce real text output
+   - submit via swarm.submit_result with artifact + content field
 
-3. Register with swarm using your canonical DID from status.agent_id (not alias names):
-   echo '{"jsonrpc":"2.0","method":"swarm.register_agent","params":{"agent_id":"<status.agent_id>"},"id":"init","signature":""}' | nc 127.0.0.1 $RPC_PORT
-
-4. Parse the response to extract your tier: "tier": "Tier1" / "Tier2" / ... / "Executor"
-
-5. Store your tier in memory for task processing
-
-MAIN LOOP (run forever):
-While true:
-  1. Poll for tasks (every 60 seconds):
-     echo '{"jsonrpc":"2.0","method":"swarm.receive_task","params":{},"id":"poll","signature":""}' | nc 127.0.0.1 $RPC_PORT
-
-  2. Track which task IDs you've already processed (keep a list in memory)
-
-  3. For each NEW task (not already processed):
-
-      A. Get task details:
-         echo '{"jsonrpc":"2.0","method":"swarm.get_task","params":{"task_id":"TASK_ID"},"id":"task","signature":""}' | nc 127.0.0.1 $RPC_PORT
-
-     B. IF YOUR TIER IS A COORDINATOR (Tier1, Tier2, ..., TierN - anything except Executor):
-        - You decompose tasks into subtasks
-        - Analyze the task using your AI capabilities
-        - Generate a decomposition plan (3-10 subtasks)
-        - Create plan JSON:
-          {
-            "task_id": "TASK_ID",
-            "proposer": "$AGENT_NAME",
-            "epoch": EPOCH_FROM_TASK,
-            "subtasks": [
-              {"index": 1, "description": "Detailed subtask 1", "estimated_complexity": 0.2},
-              {"index": 2, "description": "Detailed subtask 2", "estimated_complexity": 0.3},
-              ...
-            ],
-            "rationale": "Why this decomposition is optimal",
-            "estimated_parallelism": NUMBER_OF_SUBTASKS
-          }
-        - Submit plan:
-          echo '{"jsonrpc":"2.0","method":"swarm.propose_plan","params":PLAN_JSON,"id":"propose","signature":""}' | nc 127.0.0.1 $RPC_PORT
-        - Mark task as processed
-
-     C. IF YOUR TIER IS 'Executor' (Leaf Worker):
-        - You execute tasks, not decompose them
-        - Perform the actual work using your AI capabilities:
-          * Research the topic
-          * Write code
-          * Analyze data
-          * Generate content
-          * Whatever the task requires
-        - Create result JSON:
-          {
-            "task_id": "TASK_ID",
-            "agent_id": "$AGENT_NAME",
-            "artifact": {
-              "artifact_id": "TASK_ID-result",
-              "task_id": "TASK_ID",
-              "producer": "$AGENT_NAME",
-              "content_cid": "HASH_OF_YOUR_RESULT",
-              "merkle_hash": "HASH_OF_YOUR_RESULT",
-              "content_type": "text/plain",
-              "size_bytes": SIZE_OF_RESULT,
-              "created_at": "CURRENT_TIMESTAMP"
-            },
-            "merkle_proof": []
-          }
-        - Submit result:
-          echo '{"jsonrpc":"2.0","method":"swarm.submit_result","params":RESULT_JSON,"id":"result","signature":""}' | nc 127.0.0.1 $RPC_PORT
-        - Mark task as processed
-
-  4. Sleep 60 seconds and repeat
-
-IMPORTANT:
-- NEVER process the same task twice
-- Use your bash execution tools for all RPC calls
-- Log all actions for debugging
-- Only stop when interrupted
-- Coordinators propose PLANS, Executors perform WORK
-- Provide high-quality, thoughtful work
-
-Run autonomously until interrupted.
+Finish after this single cycle.
 EOF
 
 echo "Starting Zeroclaw agent: $AGENT_NAME"
@@ -313,7 +251,7 @@ echo "Files Port: $FILES_PORT"
 echo ""
 
 # Run Zeroclaw in repeated single-shot mode for current CLI compatibility.
-INSTRUCTIONS_TEXT="$(<"$INSTRUCTIONS_FILE")"
+BASE_INSTRUCTIONS_TEXT="$(<"$INSTRUCTIONS_FILE")"
 
 CONFIG_DIR="/tmp/zeroclaw-config-${AGENT_NAME}"
 CONFIG_FILE="$CONFIG_DIR/config.toml"
@@ -335,7 +273,7 @@ max_actions_per_hour = 10000
 max_cost_per_day_cents = 100000
 require_approval_for_medium_risk = false
 block_high_risk_commands = false
-auto_approve = ["shell", "file_write", "file_read", "list_dir"]
+auto_approve = ["*"]
 
 [runtime]
 kind = "native"
@@ -364,19 +302,99 @@ sub(r'^max_actions_per_hour\s*=\s*\d+', 'max_actions_per_hour = 10000')
 sub(r'^max_cost_per_day_cents\s*=\s*\d+', 'max_cost_per_day_cents = 100000')
 sub(r'^require_approval_for_medium_risk\s*=\s*(true|false)', 'require_approval_for_medium_risk = false')
 sub(r'^block_high_risk_commands\s*=\s*(true|false)', 'block_high_risk_commands = false')
+sub(r'^auto_approve\s*=\s*\[[^\]]*\]', 'auto_approve = ["*"]')
 
 if 'auto_approve =' not in text:
     text = text.replace(
         'block_high_risk_commands = false',
-        'block_high_risk_commands = false\nauto_approve = ["shell", "file_write", "file_read", "list_dir"]'
+        'block_high_risk_commands = false\nauto_approve = ["*"]'
     )
 
 with open(path, 'w', encoding='utf-8') as f:
     f.write(text)
 PY
 
+rpc_call() {
+    local payload="$1"
+    local out=""
+    for _ in 1 2 3; do
+        out="$(printf '%s\n' "$payload" | nc -w 10 127.0.0.1 "$RPC_PORT" 2>/dev/null || true)"
+        if [ -n "$out" ]; then
+            printf '%s\n' "$out"
+            return 0
+        fi
+        sleep 1
+    done
+    return 0
+}
+
+STATUS_JSON="$(rpc_call '{"jsonrpc":"2.0","method":"swarm.get_status","params":{},"id":"status","signature":""}')"
+AGENT_DID="$(python3 - "$STATUS_JSON" <<'PY'
+import json
+import sys
+
+raw = sys.argv[1]
+try:
+    data = json.loads(raw)
+    print(data.get("result", {}).get("agent_id", ""))
+except Exception:
+    print("")
+PY
+)"
+
+if [ -n "$AGENT_DID" ]; then
+    rpc_call "{\"jsonrpc\":\"2.0\",\"method\":\"swarm.register_agent\",\"params\":{\"agent_id\":\"$AGENT_DID\"},\"id\":\"register\",\"signature\":\"\"}" >/dev/null
+fi
+
+JITTER="$(( $(printf '%s' "$AGENT_NAME" | cksum | awk '{print $1}') % 120 ))"
+sleep "$JITTER"
+
+EMPTY_BACKOFF=10
+
 while true; do
+    RECEIVE_JSON="$(rpc_call '{"jsonrpc":"2.0","method":"swarm.receive_task","params":{},"id":"receive","signature":""}')"
+    PENDING_TASKS="$(python3 - "$RECEIVE_JSON" <<'PY'
+import json
+import sys
+
+raw = sys.argv[1]
+try:
+    data = json.loads(raw)
+    tasks = data.get("result", {}).get("pending_tasks", [])
+    if isinstance(tasks, list):
+        print("\n".join(str(t) for t in tasks))
+except Exception:
+    pass
+PY
+)"
+
+    PENDING_COUNT="$(printf '%s\n' "$PENDING_TASKS" | awk 'NF { c++ } END { print c+0 }')"
+    echo "$(date -u +%FT%TZ) poll pending_tasks=$PENDING_COUNT"
+
+    if [ -z "$PENDING_TASKS" ]; then
+        sleep "$EMPTY_BACKOFF"
+        EMPTY_BACKOFF=$(( EMPTY_BACKOFF * 2 ))
+        if [ "$EMPTY_BACKOFF" -gt 40 ]; then
+            EMPTY_BACKOFF=40
+        fi
+        continue
+    fi
+
+    EMPTY_BACKOFF=10
+
+    INSTRUCTIONS_TEXT="$BASE_INSTRUCTIONS_TEXT
+
+Current status snapshot:
+- agent_did: ${AGENT_DID:-unknown}
+- rpc_port: $RPC_PORT
+- pending_task_ids:
+$PENDING_TASKS
+
+Execute exactly one cycle now for these pending tasks only."
+
+    # Feed one-shot "Always" approval to avoid interactive stalls on tool execution.
     # shellcheck disable=SC2086
-    zeroclaw --config-dir "$CONFIG_DIR" agent $LLM_ARGS --message "$INSTRUCTIONS_TEXT" || true
-    sleep 30
+    printf 'A\n' | zeroclaw --config-dir "$CONFIG_DIR" agent $LLM_ARGS --message "$INSTRUCTIONS_TEXT" || true
+    # Cooldown to avoid provider free-tier burst limits.
+    sleep 120
 done

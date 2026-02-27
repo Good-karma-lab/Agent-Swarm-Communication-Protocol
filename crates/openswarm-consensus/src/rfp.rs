@@ -171,6 +171,18 @@ impl RfpCoordinator {
         &mut self,
         params: &ProposalCommitParams,
     ) -> Result<(), ConsensusError> {
+        if matches!(self.phase, RfpPhase::RevealPhase | RfpPhase::ReadyForVoting)
+            && self.commits.len() < self.expected_proposers
+        {
+            self.phase = RfpPhase::CommitPhase;
+            tracing::warn!(
+                task_id = %self.task_id,
+                commits = self.commits.len(),
+                expected = self.expected_proposers,
+                "Reopening commit phase due additional expected proposers"
+            );
+        }
+
         if self.phase != RfpPhase::CommitPhase {
             return Err(ConsensusError::RfpFailed(format!(
                 "Not in commit phase (currently {:?})",

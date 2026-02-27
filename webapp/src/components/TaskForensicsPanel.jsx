@@ -177,7 +177,7 @@ export default function TaskForensicsPanel({ taskTrace, tasks, taskId, setTaskId
                 <td className="mono">{t.task_id}</td>
                 <td>{t.status}</td>
                 <td>{scrub(t.assigned_to_name || 'unassigned')}</td>
-                <td>{t.has_result ? 'yes' : 'no'}</td>
+                <td>{t.result_text || (t.has_result ? 'result captured' : 'no')}</td>
               </tr>
             ))}
           </tbody>
@@ -207,6 +207,7 @@ export default function TaskForensicsPanel({ taskTrace, tasks, taskId, setTaskId
           <div>content_type: {taskTrace?.result_artifact?.content_type || '-'}</div>
           <div>size_bytes: {taskTrace?.result_artifact?.size_bytes ?? '-'}</div>
           <div>created_at: {taskTrace?.result_artifact?.created_at || '-'}</div>
+          <div>text_result: {taskTrace?.result_text || '-'}</div>
         </div>
       </div>
     </div>

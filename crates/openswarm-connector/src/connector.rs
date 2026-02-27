@@ -29,6 +29,10 @@ use crate::config::ConnectorConfig;
 use crate::tui::{LogCategory, LogEntry};
 
 const ACTIVE_MEMBER_STALENESS_SECS: u64 = 45;
+const PARTICIPATION_POLL_STALENESS_SECS: u64 = 180;
+const EXECUTION_ASSIGNMENT_TIMEOUT_SECS: i64 = 420;
+const PROPOSAL_STAGE_TIMEOUT_SECS: i64 = 180;
+const VOTING_STAGE_TIMEOUT_SECS: i64 = 180;
 
 /// Information about a known swarm tracked by this connector.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -67,6 +71,22 @@ pub struct MessageTraceEvent {
     pub task_id: Option<String>,
     pub size_bytes: usize,
     pub outcome: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AgentActivity {
+    pub tasks_assigned_count: u64,
+    pub tasks_processed_count: u64,
+    pub plans_proposed_count: u64,
+    pub plans_revealed_count: u64,
+    pub votes_cast_count: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TaskVoteRequirement {
+    pub expected_proposers: usize,
+    pub expected_voters: usize,
+    pub tier_level: u32,
 }
 
 /// Status of the connector.
@@ -118,10 +138,18 @@ pub struct ConnectorState {
     pub member_last_seen: std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>,
     /// Human-readable display names for agents.
     pub agent_names: std::collections::HashMap<String, String>,
+    /// Per-agent activity counters for operator diagnostics.
+    pub agent_activity: std::collections::HashMap<String, AgentActivity>,
+    /// Per-task expected participation constraints for proposals/voting.
+    pub task_vote_requirements: std::collections::HashMap<String, TaskVoteRequirement>,
     /// Last time each agent polled tasks from its local connector loop.
     pub member_last_task_poll: std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>,
     /// Last time each agent submitted a task result.
     pub member_last_result: std::collections::HashMap<String, chrono::DateTime<chrono::Utc>>,
+    /// Optional textual result payload by task ID.
+    pub task_result_text: std::collections::HashMap<String, String>,
+    /// Deferred plan reveals waiting for commit quorum, keyed by task/proposer.
+    pub pending_plan_reveals: std::collections::HashMap<String, std::collections::HashMap<String, Plan>>,
     /// Merkle DAG for result verification.
     pub merkle_dag: MerkleDag,
     /// Content-addressed storage.
@@ -223,6 +251,32 @@ impl ConnectorState {
             .insert(agent_id.to_string(), chrono::Utc::now());
     }
 
+    fn activity_mut(&mut self, agent_id: &str) -> &mut AgentActivity {
+        self.agent_activity
+            .entry(agent_id.to_string())
+            .or_default()
+    }
+
+    pub fn bump_tasks_assigned(&mut self, agent_id: &str) {
+        self.activity_mut(agent_id).tasks_assigned_count += 1;
+    }
+
+    pub fn bump_tasks_processed(&mut self, agent_id: &str) {
+        self.activity_mut(agent_id).tasks_processed_count += 1;
+    }
+
+    pub fn bump_plans_proposed(&mut self, agent_id: &str) {
+        self.activity_mut(agent_id).plans_proposed_count += 1;
+    }
+
+    pub fn bump_plans_revealed(&mut self, agent_id: &str) {
+        self.activity_mut(agent_id).plans_revealed_count += 1;
+    }
+
+    pub fn bump_votes_cast(&mut self, agent_id: &str) {
+        self.activity_mut(agent_id).votes_cast_count += 1;
+    }
+
     pub fn active_member_ids(&self, max_staleness: Duration) -> Vec<String> {
         let now = chrono::Utc::now();
         let mut ids: Vec<String> = self
@@ -272,6 +326,7 @@ impl ConnectorState {
                 self.member_last_seen.remove(&stale);
                 self.member_last_task_poll.remove(&stale);
                 self.member_last_result.remove(&stale);
+                self.agent_activity.remove(&stale);
                 self.agent_tiers.remove(&stale);
                 self.agent_parents.remove(&stale);
             }
@@ -379,8 +434,16 @@ impl OpenSwarmConnector {
                 m.insert(agent_id.to_string(), config.agent.name.clone());
                 m
             },
+            agent_activity: {
+                let mut m = std::collections::HashMap::new();
+                m.insert(agent_id.to_string(), AgentActivity::default());
+                m
+            },
+            task_vote_requirements: std::collections::HashMap::new(),
             member_last_task_poll: std::collections::HashMap::new(),
             member_last_result: std::collections::HashMap::new(),
+            task_result_text: std::collections::HashMap::new(),
+            pending_plan_reveals: std::collections::HashMap::new(),
             merkle_dag: MerkleDag::new(),
             content_store: ContentStore::new(),
             granularity: GranularityAlgorithm::default(),
@@ -488,6 +551,7 @@ impl OpenSwarmConnector {
         let mut bootstrap_retry_interval = tokio::time::interval(Duration::from_secs(20));
         // Voting completion check every 5 seconds
         let mut voting_check_interval = tokio::time::interval(Duration::from_secs(5));
+        let mut execution_timeout_interval = tokio::time::interval(Duration::from_secs(10));
 
         loop {
             tokio::select! {
@@ -511,6 +575,9 @@ impl OpenSwarmConnector {
                 }
                 _ = voting_check_interval.tick() => {
                     self.check_voting_completion().await;
+                }
+                _ = execution_timeout_interval.tick() => {
+                    self.check_execution_timeouts().await;
                 }
             }
         }
@@ -806,6 +873,12 @@ impl OpenSwarmConnector {
                     let mut task = params.task.clone();
                     task.assigned_to = Some(params.assignee.clone());
                     task.status = TaskStatus::InProgress;
+                    if task.deadline.is_none() {
+                        task.deadline = Some(
+                            chrono::Utc::now()
+                                + chrono::Duration::seconds(EXECUTION_ASSIGNMENT_TIMEOUT_SECS),
+                        );
+                    }
 
                     let task_id = task.task_id.clone();
                     let parent_task_id = params.parent_task_id.clone();
@@ -828,6 +901,7 @@ impl OpenSwarmConnector {
                     }
 
                     state.mark_member_seen(params.assignee.as_str());
+                    state.bump_tasks_assigned(params.assignee.as_str());
                     state.push_task_timeline_event(
                         &task_id,
                         if assigned_here { "assigned" } else { "assignment_observed" },
@@ -872,9 +946,29 @@ impl OpenSwarmConnector {
                     serde_json::from_value::<ProposalCommitParams>(message.params)
                 {
                     let mut state = self.state.write().await;
+                    if !Self::is_participating_member_for_task(
+                        &state,
+                        &params.task_id,
+                        params.proposer.as_str(),
+                        Duration::from_secs(PARTICIPATION_POLL_STALENESS_SECS),
+                    ) {
+                        state.push_log(
+                            LogCategory::Task,
+                            format!(
+                                "Ignoring proposal commit from non-responding proposer {} for task {}",
+                                params.proposer, params.task_id
+                            ),
+                        );
+                        return;
+                    }
                     if let Some(task) = state.task_details.get_mut(&params.task_id) {
                         task.status = TaskStatus::ProposalPhase;
                     }
+
+                    let requirement = Self::expected_vote_requirement_for_task(&state, &params.task_id);
+                    state
+                        .task_vote_requirements
+                        .insert(params.task_id.clone(), requirement.clone());
                     let injected_task = state
                         .task_details
                         .get(&params.task_id)
@@ -886,31 +980,93 @@ impl OpenSwarmConnector {
                             status: TaskStatus::Pending,
                             description: "Observed proposal commit".to_string(),
                             assigned_to: None,
-                            tier_level: 1,
+                            tier_level: requirement.tier_level,
                             subtasks: Vec::new(),
                             created_at: chrono::Utc::now(),
                             deadline: None,
                         });
-                    let rfp = state
+                    {
+                        let rfp = state
+                            .rfp_coordinators
+                            .entry(params.task_id.clone())
+                            .or_insert_with(|| {
+                                RfpCoordinator::new(
+                                    params.task_id.clone(),
+                                    params.epoch,
+                                    requirement.expected_proposers,
+                                )
+                            });
+                        if matches!(rfp.phase(), openswarm_consensus::rfp::RfpPhase::Idle) {
+                            let _ = rfp.inject_task(&injected_task);
+                        }
+                        if let Err(e) = rfp.record_commit(&params) {
+                            tracing::warn!(error = %e, "Failed to record proposal commit");
+                        } else if matches!(rfp.phase(), openswarm_consensus::rfp::RfpPhase::CommitPhase) {
+                            let _ = rfp.transition_to_reveal();
+                        }
+                    }
+
+                    let flush_pending = state
                         .rfp_coordinators
-                        .entry(params.task_id.clone())
-                        .or_insert_with(|| {
-                            RfpCoordinator::new(params.task_id.clone(), params.epoch, 1)
+                        .get(&params.task_id)
+                        .map(|rfp| matches!(rfp.phase(), openswarm_consensus::rfp::RfpPhase::RevealPhase))
+                        .unwrap_or(false);
+
+                    if flush_pending {
+                        let mut pending_reveals = state
+                            .pending_plan_reveals
+                            .remove(&params.task_id)
+                            .unwrap_or_default()
+                            .into_iter()
+                            .collect::<Vec<(String, Plan)>>();
+                        pending_reveals.sort_by(|a, b| a.0.cmp(&b.0));
+                        let mut revealed_proposers = Vec::new();
+                        if let Some(rfp) = state.rfp_coordinators.get_mut(&params.task_id) {
+                            for (_, pending_plan) in pending_reveals {
+                                let reveal = ProposalRevealParams {
+                                    task_id: params.task_id.clone(),
+                                    plan: pending_plan,
+                                };
+                                if let Err(e) = rfp.record_reveal(&reveal) {
+                                    tracing::warn!(error = %e, "Failed to record deferred proposal reveal");
+                                } else {
+                                    revealed_proposers.push(reveal.plan.proposer.to_string());
+                                }
+                            }
+                        }
+                        for proposer in revealed_proposers {
+                            state.bump_plans_revealed(&proposer);
+                        }
+                    }
+
+                    let proposal_owners = state
+                        .rfp_coordinators
+                        .get(&params.task_id)
+                        .map(|rfp| {
+                            rfp.reveals
+                                .values()
+                                .map(|r| (r.plan.plan_id.clone(), r.plan.proposer.clone()))
+                                .collect::<std::collections::HashMap<String, AgentId>>()
+                        })
+                        .unwrap_or_default();
+                    if !proposal_owners.is_empty() {
+                        let voting = state.voting_engines.entry(params.task_id.clone()).or_insert_with(|| {
+                            VotingEngine::new(
+                                openswarm_consensus::voting::VotingConfig::default(),
+                                params.task_id.clone(),
+                                params.epoch,
+                            )
                         });
-                    if matches!(rfp.phase(), openswarm_consensus::rfp::RfpPhase::Idle) {
-                        let _ = rfp.inject_task(&injected_task);
+                        voting.set_proposals(proposal_owners);
                     }
-                    if let Err(e) = rfp.record_commit(&params) {
-                        tracing::warn!(error = %e, "Failed to record proposal commit");
-                    } else if matches!(rfp.phase(), openswarm_consensus::rfp::RfpPhase::CommitPhase) {
-                        let _ = rfp.transition_to_reveal();
-                    }
+
                     state.push_task_timeline_event(
                         &params.task_id,
                         "proposal_commit",
                         format!("Commit hash {}", params.plan_hash),
                         Some(params.proposer.to_string()),
                     );
+                    state.bump_plans_proposed(params.proposer.as_str());
                     state.push_log(
                         LogCategory::Task,
                         format!(
@@ -934,6 +1090,21 @@ impl OpenSwarmConnector {
                     serde_json::from_value::<ProposalRevealParams>(message.params)
                 {
                     let mut state = self.state.write().await;
+                    if !Self::is_participating_member_for_task(
+                        &state,
+                        &params.task_id,
+                        params.plan.proposer.as_str(),
+                        Duration::from_secs(PARTICIPATION_POLL_STALENESS_SECS),
+                    ) {
+                        state.push_log(
+                            LogCategory::Task,
+                            format!(
+                                "Ignoring proposal reveal from non-responding proposer {} for task {}",
+                                params.plan.proposer, params.task_id
+                            ),
+                        );
+                        return;
+                    }
                     state
                         .task_details
                         .entry(params.task_id.clone())
@@ -944,20 +1115,91 @@ impl OpenSwarmConnector {
                             }
                         });
 
-                    if let Some(rfp) = state.rfp_coordinators.get_mut(&params.task_id) {
-                        if matches!(rfp.phase(), openswarm_consensus::rfp::RfpPhase::CommitPhase) {
-                            let _ = rfp.transition_to_reveal();
+                    let requirement = Self::expected_vote_requirement_for_task(&state, &params.task_id);
+                    state
+                        .task_vote_requirements
+                        .insert(params.task_id.clone(), requirement.clone());
+
+                    let injected_task = state
+                        .task_details
+                        .get(&params.task_id)
+                        .cloned()
+                        .unwrap_or(Task {
+                            task_id: params.task_id.clone(),
+                            parent_task_id: None,
+                            epoch: params.plan.epoch,
+                            status: TaskStatus::Pending,
+                            description: "Observed proposal reveal".to_string(),
+                            assigned_to: None,
+                            tier_level: requirement.tier_level,
+                            subtasks: Vec::new(),
+                            created_at: chrono::Utc::now(),
+                            deadline: None,
+                        });
+
+                    let should_queue_reveal = {
+                        let rfp = state
+                            .rfp_coordinators
+                            .entry(params.task_id.clone())
+                            .or_insert_with(|| {
+                                RfpCoordinator::new(
+                                    params.task_id.clone(),
+                                    params.plan.epoch,
+                                    requirement.expected_proposers,
+                                )
+                            });
+                        if matches!(rfp.phase(), openswarm_consensus::rfp::RfpPhase::Idle) {
+                            let _ = rfp.inject_task(&injected_task);
                         }
-                        if let Err(e) = rfp.record_reveal(&params) {
-                            tracing::warn!(error = %e, "Failed to record proposal reveal");
+                        if matches!(
+                            rfp.phase(),
+                            openswarm_consensus::rfp::RfpPhase::RevealPhase
+                                | openswarm_consensus::rfp::RfpPhase::ReadyForVoting
+                        ) {
+                            if let Err(e) = rfp.record_reveal(&params) {
+                                tracing::warn!(error = %e, "Failed to record proposal reveal");
+                            }
+                            false
+                        } else {
+                            true
                         }
+                    };
+
+                    if should_queue_reveal {
+                        state
+                            .pending_plan_reveals
+                            .entry(params.task_id.clone())
+                            .or_default()
+                            .insert(params.plan.proposer.to_string(), params.plan.clone());
                     }
+
+                    let proposal_owners = state
+                        .rfp_coordinators
+                        .get(&params.task_id)
+                        .map(|rfp| {
+                            rfp.reveals
+                                .values()
+                                .map(|r| (r.plan.plan_id.clone(), r.plan.proposer.clone()))
+                                .collect::<std::collections::HashMap<String, AgentId>>()
+                        })
+                        .unwrap_or_default();
+
+                    let voting = state.voting_engines.entry(params.task_id.clone()).or_insert_with(|| {
+                        VotingEngine::new(
+                            openswarm_consensus::voting::VotingConfig::default(),
+                            params.task_id.clone(),
+                            params.plan.epoch,
+                        )
+                    });
+                    voting.set_proposals(proposal_owners);
+
                     state.push_task_timeline_event(
                         &params.task_id,
                         "proposal_reveal",
                         format!("{} subtasks revealed", params.plan.subtasks.len()),
                         Some(params.plan.proposer.to_string()),
                     );
+                    state.bump_plans_revealed(params.plan.proposer.as_str());
                     state.push_log(
                         LogCategory::Task,
                         format!(
@@ -993,6 +1235,21 @@ impl OpenSwarmConnector {
                     let voter = params.voter.clone();
                     let rankings_preview = params.rankings.join(" > ");
                     let mut state = self.state.write().await;
+                    if !Self::is_participating_member_for_task(
+                        &state,
+                        &task_id,
+                        voter.as_str(),
+                        Duration::from_secs(PARTICIPATION_POLL_STALENESS_SECS),
+                    ) {
+                        state.push_log(
+                            LogCategory::Vote,
+                            format!(
+                                "Ignoring vote from non-responding voter {} for task {}",
+                                voter, task_id
+                            ),
+                        );
+                        return;
+                    }
                     state.mark_member_seen(voter.as_str());
                     if let Some(task) = state.task_details.get_mut(&task_id) {
                         task.status = TaskStatus::VotingPhase;
@@ -1015,6 +1272,7 @@ impl OpenSwarmConnector {
                         format!("Rankings: {}", rankings_preview),
                         Some(voter.to_string()),
                     );
+                    state.bump_votes_cast(voter.as_str());
                     state.push_log(
                         LogCategory::Vote,
                         format!(
@@ -1027,16 +1285,40 @@ impl OpenSwarmConnector {
                 }
             }
             Some(ProtocolMethod::ResultSubmission) => {
+                let raw_params = message.params.clone();
                 if let Ok(params) =
-                    serde_json::from_value::<ResultSubmissionParams>(message.params)
+                    serde_json::from_value::<ResultSubmissionParams>(raw_params.clone())
                 {
                     let mut state = self.state.write().await;
+                    if let Some(task) = state.task_details.get(&params.task_id) {
+                        if task.assigned_to.as_ref() != Some(&params.agent_id) {
+                            state.push_log(
+                                LogCategory::Task,
+                                format!(
+                                    "Ignoring late result for task {} from replaced assignee {}",
+                                    params.task_id, params.agent_id
+                                ),
+                            );
+                            return;
+                        }
+                        if task.parent_task_id.is_none() && task.subtasks.is_empty() {
+                            state.push_log(
+                                LogCategory::Task,
+                                format!(
+                                    "Rejected direct root result for task {} (no subtasks)",
+                                    params.task_id
+                                ),
+                            );
+                            return;
+                        }
+                    }
                     if let Some(task) = state.task_details.get_mut(&params.task_id) {
                         task.status = TaskStatus::Completed;
                         task.assigned_to = Some(params.agent_id.clone());
                     }
                     state.task_set.remove(&params.task_id);
                     state.mark_member_submitted_result(params.agent_id.as_str());
+                    state.bump_tasks_processed(params.agent_id.as_str());
                     state.mark_member_seen(params.agent_id.as_str());
                     // Store the artifact content CID as leaf content bytes in the DAG.
                     state.merkle_dag.add_leaf(
@@ -1067,6 +1349,13 @@ impl OpenSwarmConnector {
                             params.task_id, params.agent_id, params.artifact.artifact_id
                         ),
                     );
+                    if let Some(content) = raw_params.get("content").and_then(|v| v.as_str()) {
+                        if !content.trim().is_empty() {
+                            state
+                                .task_result_text
+                                .insert(params.task_id.clone(), content.to_string());
+                        }
+                    }
                 }
             }
             Some(ProtocolMethod::Succession) => {
@@ -1377,26 +1666,110 @@ impl OpenSwarmConnector {
     async fn check_voting_completion(&self) {
         let mut state = self.state.write().await;
         let mut completed_votes = Vec::new();
+        let mut assignments_to_run: Vec<(String, String)> = Vec::new();
 
         // Collect voting results first (to avoid borrow issues)
         let mut results_to_process = Vec::new();
 
-        for (task_id, voting_engine) in &mut state.voting_engines {
-            let ballot_count = voting_engine.ballot_count();
-            let proposal_count = voting_engine.proposal_count();
+        let task_ids: Vec<String> = state.voting_engines.keys().cloned().collect();
+        let mut pending_logs: Vec<String> = Vec::new();
 
-            // Check if we have enough votes (at least equal to proposal count means all voters participated)
-            // In a real system, we'd also check for timeouts
-            if ballot_count >= proposal_count && ballot_count > 0 {
+        for task_id in task_ids {
+            let mut single_proposal_id: Option<String> = None;
+            if let Some(proposal_owners) = state.rfp_coordinators.get(&task_id).map(|rfp| {
+                rfp.reveals
+                    .values()
+                    .map(|r| (r.plan.plan_id.clone(), r.plan.proposer.clone()))
+                    .collect::<std::collections::HashMap<String, AgentId>>()
+            }) {
+                if proposal_owners.len() == 1 {
+                    single_proposal_id = proposal_owners.keys().next().cloned();
+                }
+                if !proposal_owners.is_empty() {
+                    if let Some(v) = state.voting_engines.get_mut(&task_id) {
+                        v.set_proposals(proposal_owners);
+                    }
+                }
+            }
+
+            let requirement = Self::expected_vote_requirement_for_task(&state, &task_id);
+            state
+                .task_vote_requirements
+                .insert(task_id.clone(), requirement.clone());
+
+            let (ballot_count, proposal_count) = match state.voting_engines.get(&task_id) {
+                Some(v) => (v.ballot_count(), v.proposal_count()),
+                None => continue,
+            };
+            let mut expected_votes = requirement.expected_voters.max(1);
+            let mut expected_proposals = requirement.expected_proposers.max(1);
+
+            if let Some(task) = state.task_details.get(&task_id) {
+                let age_secs = chrono::Utc::now()
+                    .signed_duration_since(task.created_at)
+                    .num_seconds();
+                if age_secs >= PROPOSAL_STAGE_TIMEOUT_SECS {
+                    expected_proposals = expected_proposals.min(proposal_count.max(1));
+                }
+                if age_secs >= VOTING_STAGE_TIMEOUT_SECS {
+                    expected_votes = expected_votes.min(ballot_count.max(1));
+                }
+            }
+
+            // Strict participation gate: all expected tier members must propose and vote.
+            let task_age_secs = state
+                .task_details
+                .get(&task_id)
+                .map(|task| chrono::Utc::now().signed_duration_since(task.created_at).num_seconds())
+                .unwrap_or(0);
+
+            if ballot_count == 0
+                && proposal_count == 1
+                && task_age_secs >= VOTING_STAGE_TIMEOUT_SECS
+            {
+                if let Some(winner) = single_proposal_id {
+                    state.push_log(
+                        LogCategory::Vote,
+                        format!(
+                            "Voting timeout for task {}; selecting sole proposal {}",
+                            task_id, winner
+                        ),
+                    );
+                    state.push_task_timeline_event(
+                        &task_id,
+                        "plan_selected",
+                        format!("Sole proposal {} selected after voting timeout", winner),
+                        None,
+                    );
+                    if let Some(task) = state.task_details.get_mut(&task_id) {
+                        task.status = TaskStatus::InProgress;
+                    }
+                    assignments_to_run.push((task_id.clone(), winner));
+                    completed_votes.push(task_id.clone());
+                    continue;
+                }
+            }
+
+            if proposal_count >= expected_proposals && ballot_count >= expected_votes {
                 tracing::info!(
                     task_id = %task_id,
                     ballot_count,
                     proposal_count,
+                    expected_votes,
+                    expected_proposals,
                     "Voting quorum reached, running IRV"
                 );
 
                 // Run Instant Runoff Voting to select winner
-                match voting_engine.run_irv() {
+                let irv_result = {
+                    let voting_engine = match state.voting_engines.get_mut(&task_id) {
+                        Some(v) => v,
+                        None => continue,
+                    };
+                    voting_engine.run_irv()
+                };
+
+                match irv_result {
                     Ok(result) => {
                         results_to_process.push((task_id.clone(), Ok(result)));
                         completed_votes.push(task_id.clone());
@@ -1405,7 +1778,16 @@ impl OpenSwarmConnector {
                         results_to_process.push((task_id.clone(), Err(e)));
                     }
                 }
+            } else {
+                pending_logs.push(format!(
+                    "Voting pending for task {}: proposals {}/{} votes {}/{}",
+                    task_id, proposal_count, expected_proposals, ballot_count, expected_votes
+                ));
             }
+        }
+
+        for msg in pending_logs {
+            state.push_log(LogCategory::Vote, msg);
         }
 
         // Process results (now we can mutably borrow state again)
@@ -1439,15 +1821,7 @@ impl OpenSwarmConnector {
                         "Voting completed successfully"
                     );
 
-                    // Now assign subtasks to subordinates
-                    if let Err(e) = self.assign_subtasks_from_winner(&task_id, &voting_result.winner).await {
-                        tracing::error!(
-                            task_id = %task_id,
-                            winner = %voting_result.winner,
-                            error = %e,
-                            "Failed to assign subtasks after voting"
-                        );
-                    }
+                    assignments_to_run.push((task_id.clone(), voting_result.winner.clone()));
                 }
                 Err(e) => {
                     tracing::error!(
@@ -1466,6 +1840,160 @@ impl OpenSwarmConnector {
         // Remove completed voting engines
         for task_id in completed_votes {
             state.voting_engines.remove(&task_id);
+            state.task_vote_requirements.remove(&task_id);
+        }
+
+        drop(state);
+
+        for (task_id, winner_plan_id) in assignments_to_run {
+            if let Err(e) = self.assign_subtasks_from_winner(&task_id, &winner_plan_id).await {
+                tracing::error!(
+                    task_id = %task_id,
+                    winner = %winner_plan_id,
+                    error = %e,
+                    "Failed to assign subtasks after voting"
+                );
+            }
+        }
+    }
+
+    async fn check_execution_timeouts(&self) {
+        let now = chrono::Utc::now();
+        let mut publishes: Vec<(String, Vec<u8>, String)> = Vec::new();
+
+        {
+            let mut state = self.state.write().await;
+            let my_id = state.agent_id.to_string();
+            let swarm_id = state.current_swarm_id.as_str().to_string();
+            let poll_staleness = Duration::from_secs(PARTICIPATION_POLL_STALENESS_SECS);
+            let seen_staleness = Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS);
+            let active_members: std::collections::HashSet<String> =
+                state.active_member_ids(seen_staleness).into_iter().collect();
+
+            let timed_out_tasks: Vec<String> = state
+                .task_details
+                .iter()
+                .filter_map(|(task_id, task)| {
+                    if !matches!(task.status, TaskStatus::InProgress) {
+                        return None;
+                    }
+                    if task.parent_task_id.is_none() {
+                        return None;
+                    }
+                    match task.deadline {
+                        Some(deadline) if deadline <= now => Some(task_id.clone()),
+                        _ => None,
+                    }
+                })
+                .collect();
+
+            for task_id in timed_out_tasks {
+                let Some(task_snapshot) = state.task_details.get(&task_id).cloned() else {
+                    continue;
+                };
+                let Some(parent_id) = task_snapshot.parent_task_id.clone() else {
+                    continue;
+                };
+                let old_assignee = task_snapshot.assigned_to.clone();
+                let my_subordinates = state
+                    .subordinates
+                    .get(&my_id)
+                    .cloned()
+                    .unwrap_or_default();
+                if !my_subordinates
+                    .iter()
+                    .any(|id| Some(id.as_str()) == old_assignee.as_ref().map(|a| a.as_str()))
+                {
+                    continue;
+                }
+                let expected_tier = old_assignee
+                    .as_ref()
+                    .and_then(|a| state.agent_tiers.get(a.as_str()).copied());
+
+                let mut candidates = my_subordinates
+                    .into_iter()
+                    .filter(|candidate| {
+                        if Some(candidate.as_str()) == old_assignee.as_ref().map(|a| a.as_str()) {
+                            return false;
+                        }
+                        if !active_members.contains(candidate) {
+                            return false;
+                        }
+                        if !Self::member_loop_active(&state, candidate, poll_staleness) {
+                            return false;
+                        }
+                        if let Some(tier) = expected_tier {
+                            return state.agent_tiers.get(candidate).copied().unwrap_or(Tier::Executor)
+                                == tier;
+                        }
+                        true
+                    })
+                    .collect::<Vec<_>>();
+
+                candidates.sort();
+                let Some(new_assignee) = candidates.into_iter().next() else {
+                    continue;
+                };
+
+                if let Some(task) = state.task_details.get_mut(&task_id) {
+                    task.assigned_to = Some(AgentId::new(new_assignee.clone()));
+                    task.status = TaskStatus::InProgress;
+                    task.deadline = Some(now + chrono::Duration::seconds(EXECUTION_ASSIGNMENT_TIMEOUT_SECS));
+                }
+                state.bump_tasks_assigned(&new_assignee);
+                state.push_task_timeline_event(
+                    &task_id,
+                    "reassigned",
+                    format!(
+                        "Task reassigned due to timeout: {} -> {}",
+                        old_assignee
+                            .as_ref()
+                            .map(|a| a.as_str())
+                            .unwrap_or("unassigned"),
+                        new_assignee
+                    ),
+                    Some(my_id.clone()),
+                );
+                state.push_log(
+                    LogCategory::Task,
+                    format!(
+                        "Task {} reassigned due to non-response: {} -> {}",
+                        task_id,
+                        old_assignee
+                            .as_ref()
+                            .map(|a| a.as_str())
+                            .unwrap_or("unassigned"),
+                        new_assignee
+                    ),
+                );
+
+                let Some(mut reassigned_task) = state.task_details.get(&task_id).cloned() else {
+                    continue;
+                };
+                reassigned_task.assigned_to = Some(AgentId::new(new_assignee.clone()));
+
+                let assign_params = TaskAssignmentParams {
+                    task: reassigned_task,
+                    assignee: AgentId::new(new_assignee),
+                    parent_task_id: parent_id,
+                    winning_plan_id: "reassign-timeout".to_string(),
+                };
+                let assign_msg = SwarmMessage::new(
+                    ProtocolMethod::TaskAssignment.as_str(),
+                    serde_json::to_value(&assign_params).unwrap_or_default(),
+                    String::new(),
+                );
+                if let Ok(data) = serde_json::to_vec(&assign_msg) {
+                    let topic = SwarmTopics::tasks_for(swarm_id.as_str(), task_snapshot.tier_level);
+                    publishes.push((topic, data, task_id.clone()));
+                }
+            }
+        }
+
+        for (topic, data, task_id) in publishes {
+            if let Err(e) = self.network_handle.publish(&topic, data).await {
+                tracing::error!(task_id = %task_id, topic = %topic, error = %e, "Failed to publish reassignment");
+            }
         }
     }
 
@@ -1532,11 +2060,14 @@ impl OpenSwarmConnector {
                 tier_level: (parent_tier + 1).min(openswarm_protocol::MAX_HIERARCHY_DEPTH),
                 subtasks: Vec::new(),
                 created_at: chrono::Utc::now(),
-                deadline: None,
+                deadline: Some(
+                    chrono::Utc::now() + chrono::Duration::seconds(EXECUTION_ASSIGNMENT_TIMEOUT_SECS),
+                ),
             };
 
             // Store subtask in state
             state.task_details.insert(subtask_id.clone(), subtask.clone());
+            state.bump_tasks_assigned(assignee.as_str());
 
             // Log subtask creation
             state.push_task_timeline_event(
@@ -1834,6 +2365,79 @@ impl OpenSwarmConnector {
             Tier::Tier2 => Some(2),
             Tier::TierN(n) => Some(n),
             Tier::Executor => None,
+        }
+    }
+
+    fn level_to_tier(level: u32) -> Tier {
+        match level {
+            1 => Tier::Tier1,
+            2 => Tier::Tier2,
+            n => Tier::TierN(n),
+        }
+    }
+
+    fn member_loop_active(state: &ConnectorState, agent_id: &str, max_staleness: Duration) -> bool {
+        let now = chrono::Utc::now();
+        state
+            .member_last_task_poll
+            .get(agent_id)
+            .and_then(|ts| now.signed_duration_since(*ts).to_std().ok())
+            .map(|age| age <= max_staleness)
+            .unwrap_or(false)
+    }
+
+    fn active_participating_members_in_tier(
+        state: &ConnectorState,
+        tier: Tier,
+        member_staleness: Duration,
+        poll_staleness: Duration,
+    ) -> Vec<String> {
+        state
+            .active_member_ids(member_staleness)
+            .into_iter()
+            .filter(|id| state.agent_tiers.get(id).copied().unwrap_or(Tier::Executor) == tier)
+            .filter(|id| Self::member_loop_active(state, id, poll_staleness))
+            .collect()
+    }
+
+    fn is_participating_member_for_task(
+        state: &ConnectorState,
+        task_id: &str,
+        agent_id: &str,
+        poll_staleness: Duration,
+    ) -> bool {
+        let tier_level = state
+            .task_details
+            .get(task_id)
+            .map(|t| t.tier_level)
+            .or_else(|| state.task_vote_requirements.get(task_id).map(|r| r.tier_level))
+            .unwrap_or(1);
+        let tier = Self::level_to_tier(tier_level);
+        state.agent_tiers.get(agent_id).copied().unwrap_or(Tier::Executor) == tier
+            && Self::member_loop_active(state, agent_id, poll_staleness)
+    }
+
+    fn expected_vote_requirement_for_task(state: &ConnectorState, task_id: &str) -> TaskVoteRequirement {
+        let tier_level = state
+            .task_details
+            .get(task_id)
+            .map(|t| t.tier_level)
+            .or_else(|| state.task_vote_requirements.get(task_id).map(|r| r.tier_level))
+            .unwrap_or(1);
+        let tier = Self::level_to_tier(tier_level);
+        let expected = Self::active_participating_members_in_tier(
+            state,
+            tier,
+            Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS),
+            Duration::from_secs(PARTICIPATION_POLL_STALENESS_SECS),
+        )
+            .len()
+            .max(1);
+
+        TaskVoteRequirement {
+            expected_proposers: expected,
+            expected_voters: expected,
+            tier_level,
         }
     }
 

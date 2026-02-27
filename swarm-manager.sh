@@ -73,7 +73,7 @@ Commands:
     help                Show this help message
 
 Environment Variables:
-    AGENT_IMPL          Agent implementation: claude-code-cli (default) | zeroclaw
+    AGENT_IMPL          Agent implementation: claude-code-cli (default) | opencode | zeroclaw
     LLM_BACKEND         LLM backend for Zeroclaw: anthropic | openai | openrouter | local | ollama
     LOCAL_MODEL_PATH    Path to local model file (for local backend)
     MODEL_NAME          Model name (for OpenAI/OpenRouter/Ollama backends)
@@ -84,6 +84,9 @@ Examples:
 
     # Start 3 full agents with Claude Code CLI (default)
     $0 start-agents 3
+
+    # Start 5 full agents with OpenCode (uses opencode CLI + Anthropic subscription)
+    AGENT_IMPL=opencode $0 start-agents 5
 
     # Start 15 agents with Zeroclaw + local LLM
     AGENT_IMPL=zeroclaw LLM_BACKEND=local $0 start-agents 15
@@ -130,7 +133,7 @@ start_nodes() {
     # Clear existing nodes file
     > "$NODES_FILE"
 
-    local bootstrap_addr=""
+    local bootstrap_addr="${BOOTSTRAP_ADDR:-}"
 
     for i in $(seq 1 $num_nodes); do
         local node_name="swarm-node-$i"
@@ -487,6 +490,18 @@ start_agents() {
         fi
     fi
 
+    if [ "$AGENT_IMPL" = "zeroclaw" ] && [ "$LLM_BACKEND" = "local" ]; then
+        if [ -x "./scripts/setup-local-llm.sh" ]; then
+            echo -e "${BLUE}Ensuring local llama.cpp model server is running...${NC}"
+            ./scripts/setup-local-llm.sh start --backend llamacpp >/dev/null || {
+                echo -e "${RED}Failed to start local llama.cpp server via scripts/setup-local-llm.sh${NC}"
+                exit 1
+            }
+            echo -e "${GREEN}✓${NC} Local llama.cpp server ready"
+            echo ""
+        fi
+    fi
+
     for i in $(seq 1 $num_agents); do
         local agent_name
         agent_name="$(nobel_agent_name_for_index "$i")"
@@ -555,8 +570,8 @@ start_agents() {
             sleep 1
         done
 
-        # For the first agent, get peer ID for bootstrap
-        if [ $i -eq 1 ]; then
+        # For the first agent, get peer ID for bootstrap when external bootstrap is not set
+        if [ $i -eq 1 ] && [ -z "$bootstrap_addr" ]; then
             local peer_id=$(get_peer_id $rpc_port)
             if [ -n "$peer_id" ]; then
                 bootstrap_addr="/ip4/127.0.0.1/tcp/$p2p_port/p2p/$peer_id"
@@ -564,43 +579,7 @@ start_agents() {
             fi
         fi
 
-        # Start AI agent (Claude Code CLI or Zeroclaw)
-        if [ "$AGENT_IMPL" = "zeroclaw" ]; then
-            echo -e "  ${BLUE}Starting Zeroclaw agent (LLM: $LLM_BACKEND, model: $MODEL_NAME)...${NC}"
-
-            # Check if zeroclaw launcher exists
-            if [ ! -f "agent-impl/zeroclaw/zeroclaw-agent.sh" ]; then
-                echo -e "  ${RED}✗${NC} Zeroclaw launcher not found at agent-impl/zeroclaw/zeroclaw-agent.sh"
-                continue
-            fi
-
-            local zeroclaw_log_file="$SWARM_DIR/$agent_name-zeroclaw.log"
-            ./agent-impl/zeroclaw/zeroclaw-agent.sh \
-                --agent-name "$agent_name" \
-                --rpc-port "$rpc_port" \
-                --files-port "$files_port" \
-                --llm-backend "$LLM_BACKEND" \
-                --model-path "$LOCAL_MODEL_PATH" \
-                --model-name "$MODEL_NAME" \
-                > "$zeroclaw_log_file" 2>&1 &
-            local agent_pid=$!
-
-            # Wait to check if started
-            sleep 1
-            if ps -p $agent_pid > /dev/null 2>&1; then
-                if [[ "$OSTYPE" == "darwin"* ]]; then
-                    sed -i '' "s/$agent_name|$connector_pid|0|/$agent_name|$connector_pid|$agent_pid|/" "$NODES_FILE"
-                else
-                    sed -i "s/$agent_name|$connector_pid|0|/$agent_name|$connector_pid|$agent_pid|/" "$NODES_FILE"
-                fi
-                echo -e "  ${GREEN}✓${NC} Zeroclaw agent started (PID: $agent_pid)"
-            else
-                echo -e "  ${RED}✗${NC} Zeroclaw agent failed to start (check log: $zeroclaw_log_file)"
-            fi
-        else
-            echo -e "  ${BLUE}Starting Claude Code CLI agent...${NC}"
-
-            # Claude's instruction: read and follow SKILL.md
+        # Build agent instruction for LLM-based implementations
         local claude_instruction="CRITICAL: You are a LONG-RUNNING AUTONOMOUS AGENT. Run in an INFINITE LOOP until interrupted.
 
 Fetch the OpenSwarm skill documentation using curl (use Bash tool, not Fetch tool):
@@ -696,31 +675,94 @@ RPC server: tcp://127.0.0.1:$rpc_port
 
 Work autonomously. Run the infinite loop until interrupted."
 
-        # Launch Claude Code CLI in background
-        local claude_log_file="$SWARM_DIR/$agent_name-claude.log"
-        # Preserve ANTHROPIC_* environment variables for authentication
-        env -u CLAUDECODE \
-            ANTHROPIC_AUTH_TOKEN="${ANTHROPIC_AUTH_TOKEN:-}" \
-            ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-}" \
-            ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-}" \
-            ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}" \
-            claude --dangerously-skip-permissions "$claude_instruction" > "$claude_log_file" 2>&1 &
-        local claude_pid=$!
+        # Start AI agent (Claude Code CLI, OpenCode, or Zeroclaw)
+        if [ "$AGENT_IMPL" = "zeroclaw" ]; then
+            echo -e "  ${BLUE}Starting Zeroclaw agent (LLM: $LLM_BACKEND, model: $MODEL_NAME)...${NC}"
 
-        # Wait a moment to check if Claude starts successfully
-        sleep 1
-        if ps -p $claude_pid > /dev/null 2>&1; then
-            # Update the nodes file with Claude PID
-            if [[ "$OSTYPE" == "darwin"* ]]; then
-                sed -i '' "s/$agent_name|$connector_pid|0|/$agent_name|$connector_pid|$claude_pid|/" "$NODES_FILE"
-            else
-                sed -i "s/$agent_name|$connector_pid|0|/$agent_name|$connector_pid|$claude_pid|/" "$NODES_FILE"
+            # Check if zeroclaw launcher exists
+            if [ ! -f "agent-impl/zeroclaw/zeroclaw-agent.sh" ]; then
+                echo -e "  ${RED}✗${NC} Zeroclaw launcher not found at agent-impl/zeroclaw/zeroclaw-agent.sh"
+                continue
             fi
-            echo -e "  ${GREEN}✓${NC} <Agent> agent started (PID: $claude_pid)"
+
+            local zeroclaw_log_file="$SWARM_DIR/$agent_name-zeroclaw.log"
+            ./agent-impl/zeroclaw/zeroclaw-agent.sh \
+                --agent-name "$agent_name" \
+                --rpc-port "$rpc_port" \
+                --files-port "$files_port" \
+                --llm-backend "$LLM_BACKEND" \
+                --model-path "$LOCAL_MODEL_PATH" \
+                --model-name "$MODEL_NAME" \
+                > "$zeroclaw_log_file" 2>&1 &
+            local agent_pid=$!
+
+            # Wait to check if started
+            sleep 1
+            if ps -p $agent_pid > /dev/null 2>&1; then
+                if [[ "$OSTYPE" == "darwin"* ]]; then
+                    sed -i '' "s/$agent_name|$connector_pid|0|/$agent_name|$connector_pid|$agent_pid|/" "$NODES_FILE"
+                else
+                    sed -i "s/$agent_name|$connector_pid|0|/$agent_name|$connector_pid|$agent_pid|/" "$NODES_FILE"
+                fi
+                echo -e "  ${GREEN}✓${NC} Zeroclaw agent started (PID: $agent_pid)"
+            else
+                echo -e "  ${RED}✗${NC} Zeroclaw agent failed to start (check log: $zeroclaw_log_file)"
+            fi
+        elif [ "$AGENT_IMPL" = "opencode" ]; then
+            echo -e "  ${BLUE}Starting OpenCode agent (model: ${OPENCODE_MODEL:-openai/gpt-5.2-codex})...${NC}"
+
+            if [ ! -f "agent-impl/opencode/opencode-agent.sh" ]; then
+                echo -e "  ${RED}✗${NC} OpenCode launcher not found at agent-impl/opencode/opencode-agent.sh"
+                continue
+            fi
+
+            local opencode_log_file="$SWARM_DIR/$agent_name-opencode.log"
+            OPENCODE_BIN="${OPENCODE_BIN:-/opt/homebrew/bin/opencode}" \
+            OPENCODE_MODEL="${OPENCODE_MODEL:-openai/gpt-5.2-codex}" \
+            POLL_INTERVAL="${POLL_INTERVAL:-30}" \
+            ./agent-impl/opencode/opencode-agent.sh \
+                "$agent_name" "$rpc_port" "$files_port" \
+                > "$opencode_log_file" 2>&1 &
+            local agent_pid=$!
+
+            sleep 2
+            if ps -p $agent_pid > /dev/null 2>&1; then
+                if [[ "$OSTYPE" == "darwin"* ]]; then
+                    sed -i '' "s/$agent_name|$connector_pid|0|/$agent_name|$connector_pid|$agent_pid|/" "$NODES_FILE"
+                else
+                    sed -i "s/$agent_name|$connector_pid|0|/$agent_name|$connector_pid|$agent_pid|/" "$NODES_FILE"
+                fi
+                echo -e "  ${GREEN}✓${NC} OpenCode agent started (PID: $agent_pid)"
+            else
+                echo -e "  ${RED}✗${NC} OpenCode agent failed to start (check: $opencode_log_file)"
+            fi
         else
-            echo -e "  ${RED}✗${NC} <Agent> agent failed to start (check log: $claude_log_file)"
-            # Keep connector_pid, set claude_pid to 0 to indicate it's not running
-        fi
+            echo -e "  ${BLUE}Starting Claude Code CLI agent...${NC}"
+
+            # Launch Claude Code CLI in background
+            local claude_log_file="$SWARM_DIR/$agent_name-claude.log"
+            # Preserve ANTHROPIC_* environment variables for authentication
+            env -u CLAUDECODE \
+                ANTHROPIC_AUTH_TOKEN="${ANTHROPIC_AUTH_TOKEN:-}" \
+                ANTHROPIC_BASE_URL="${ANTHROPIC_BASE_URL:-}" \
+                ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-}" \
+                ANTHROPIC_DEFAULT_HAIKU_MODEL="${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}" \
+                claude --dangerously-skip-permissions "$claude_instruction" > "$claude_log_file" 2>&1 &
+            local claude_pid=$!
+
+            # Wait a moment to check if Claude starts successfully
+            sleep 1
+            if ps -p $claude_pid > /dev/null 2>&1; then
+                # Update the nodes file with Claude PID
+                if [[ "$OSTYPE" == "darwin"* ]]; then
+                    sed -i '' "s/$agent_name|$connector_pid|0|/$agent_name|$connector_pid|$claude_pid|/" "$NODES_FILE"
+                else
+                    sed -i "s/$agent_name|$connector_pid|0|/$agent_name|$connector_pid|$claude_pid|/" "$NODES_FILE"
+                fi
+                echo -e "  ${GREEN}✓${NC} <Agent> agent started (PID: $claude_pid)"
+            else
+                echo -e "  ${RED}✗${NC} <Agent> agent failed to start (check log: $claude_log_file)"
+            fi
         fi  # End of agent implementation selection
         echo ""
     done

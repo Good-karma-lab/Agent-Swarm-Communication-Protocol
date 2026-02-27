@@ -259,11 +259,34 @@ async fn voting_payload(
         .iter()
         .filter(|(task_id, _)| task_filter.as_ref().map(|t| t == *task_id).unwrap_or(true))
         .map(|(task_id, v)| {
+            let req = s.task_vote_requirements.get(task_id);
+            let tier_level = req.map(|r| r.tier_level).unwrap_or(1);
+            let tier = tier_from_level(tier_level);
+            let expected_voters = req
+                .map(|r| r.expected_voters)
+                .unwrap_or_else(|| {
+                    collect_known_members(&s)
+                        .into_iter()
+                        .filter(|id| s.agent_tiers.get(id).copied().unwrap_or(Tier::Executor) == tier)
+                        .count()
+                });
+            let tier_members: Vec<String> = collect_known_members(&s)
+                .into_iter()
+                .filter(|id| s.agent_tiers.get(id).copied().unwrap_or(Tier::Executor) == tier)
+                .collect();
+            let voter_ids = v.voter_ids_for_debug();
+            let missing_voter_names = tier_members
+                .into_iter()
+                .filter(|id| !voter_ids.iter().any(|voter| voter == id))
+                .map(|id| s.agent_names.get(&id).cloned().unwrap_or_else(|| short_agent_label(&id)))
+                .collect::<Vec<_>>();
             serde_json::json!({
                 "task_id": task_id,
                 "proposal_count": v.proposal_count(),
                 "ballot_count": v.ballot_count(),
                 "finalized": v.is_finalized(),
+                "expected_voters": expected_voters,
+                "missing_voter_names": missing_voter_names,
             })
         })
         .collect::<Vec<_>>();
@@ -273,6 +296,33 @@ async fn voting_payload(
         .iter()
         .filter(|(task_id, _)| task_filter.as_ref().map(|t| t == *task_id).unwrap_or(true))
         .map(|(task_id, r)| {
+            let req = s.task_vote_requirements.get(task_id);
+            let tier_level = req.map(|r| r.tier_level).unwrap_or(1);
+            let tier = tier_from_level(tier_level);
+            let expected_proposers = req
+                .map(|r| r.expected_proposers)
+                .unwrap_or_else(|| {
+                    collect_known_members(&s)
+                        .into_iter()
+                        .filter(|id| s.agent_tiers.get(id).copied().unwrap_or(Tier::Executor) == tier)
+                        .count()
+                });
+            let tier_members: Vec<String> = collect_known_members(&s)
+                .into_iter()
+                .filter(|id| s.agent_tiers.get(id).copied().unwrap_or(Tier::Executor) == tier)
+                .collect();
+
+            let commit_ids = r
+                .commits_for_debug()
+                .iter()
+                .map(|(agent, _)| agent.clone())
+                .collect::<Vec<_>>();
+            let missing_proposer_names = tier_members
+                .into_iter()
+                .filter(|id| !commit_ids.iter().any(|c| c == id))
+                .map(|id| s.agent_names.get(&id).cloned().unwrap_or_else(|| short_agent_label(&id)))
+                .collect::<Vec<_>>();
+
             let plans = r
                 .reveals
                 .values()
@@ -292,6 +342,26 @@ async fn voting_payload(
                     })
                 })
                 .collect::<Vec<_>>();
+
+            let (missing_voter_names, expected_voters) = if let Some(v) = s.voting_engines.get(task_id) {
+                let req = s.task_vote_requirements.get(task_id);
+                let expected_voters = req.map(|rr| rr.expected_voters).unwrap_or(0);
+                let tier_members: Vec<String> = collect_known_members(&s)
+                    .into_iter()
+                    .filter(|id| s.agent_tiers.get(id).copied().unwrap_or(Tier::Executor) == tier)
+                    .collect();
+                let voter_ids = v.voter_ids_for_debug();
+                (
+                    tier_members
+                        .into_iter()
+                        .filter(|id| !voter_ids.iter().any(|vv| vv == id))
+                        .map(|id| s.agent_names.get(&id).cloned().unwrap_or_else(|| short_agent_label(&id)))
+                        .collect::<Vec<_>>(),
+                    expected_voters,
+                )
+            } else {
+                (Vec::new(), 0)
+            };
             serde_json::json!({
                 "task_id": task_id,
                 "phase": format!("{:?}", r.phase()),
@@ -299,6 +369,10 @@ async fn voting_payload(
                 "reveal_count": r.reveal_count(),
                 "commits": r.commits_for_debug(),
                 "plans": plans,
+                "expected_proposers": expected_proposers,
+                "expected_voters": expected_voters,
+                "missing_proposer_names": missing_proposer_names,
+                "missing_voter_names": missing_voter_names,
             })
         })
         .collect::<Vec<_>>();
@@ -352,6 +426,7 @@ async fn api_tasks(State(web): State<WebState>) -> Json<serde_json::Value> {
         .into_iter()
         .map(|task| {
             let result = s.task_results.get(&task.task_id);
+            let result_text = s.task_result_text.get(&task.task_id).cloned();
             let assigned_to = task.assigned_to.as_ref().map(|a| a.to_string());
             let assigned_to_name = assigned_to
                 .as_ref()
@@ -374,6 +449,7 @@ async fn api_tasks(State(web): State<WebState>) -> Json<serde_json::Value> {
                 "deadline": task.deadline,
                 "has_result": result.is_some(),
                 "result_artifact": result,
+                "result_text": result_text,
             })
         })
         .collect::<Vec<_>>();
@@ -463,6 +539,7 @@ async fn api_task_timeline(
         })
     });
     let task_result = s.task_results.get(&task_id).cloned();
+    let task_result_text = s.task_result_text.get(&task_id).cloned();
     let messages = s
         .message_trace
         .iter()
@@ -474,6 +551,7 @@ async fn api_task_timeline(
         .into_iter()
         .map(|t| {
             let result = s.task_results.get(&t.task_id).cloned();
+            let result_text = s.task_result_text.get(&t.task_id).cloned();
             let assigned_to = t.assigned_to.as_ref().map(|a| a.to_string());
             let assigned_to_name = assigned_to
                 .as_ref()
@@ -496,6 +574,7 @@ async fn api_task_timeline(
                 "deadline": t.deadline,
                 "has_result": result.is_some(),
                 "result_artifact": result,
+                "result_text": result_text,
             })
         })
         .collect::<Vec<_>>();
@@ -503,6 +582,7 @@ async fn api_task_timeline(
     Json(serde_json::json!({
         "task": task,
         "result_artifact": task_result,
+        "result_text": task_result_text,
         "timeline": timeline,
         "descendants": descendants,
         "messages": messages,
@@ -540,9 +620,15 @@ async fn api_agents(State(web): State<WebState>) -> Json<serde_json::Value> {
                 "seen_secs": seen_secs,
                 "last_task_poll_secs": last_task_poll_secs,
                 "last_result_secs": last_result_secs,
+                "tasks_assigned_count": s.agent_activity.get(&id).map(|a| a.tasks_assigned_count).unwrap_or(0),
+                "tasks_processed_count": s.agent_activity.get(&id).map(|a| a.tasks_processed_count).unwrap_or(0),
+                "plans_proposed_count": s.agent_activity.get(&id).map(|a| a.plans_proposed_count).unwrap_or(0),
+                "plans_revealed_count": s.agent_activity.get(&id).map(|a| a.plans_revealed_count).unwrap_or(0),
+                "votes_cast_count": s.agent_activity.get(&id).map(|a| a.votes_cast_count).unwrap_or(0),
                 "is_self": id == s.agent_id.to_string(),
                 "connected": seen_secs.map(|v| v <= 60).unwrap_or(false),
                 "loop_active": last_task_poll_secs.map(|v| v <= 120).unwrap_or(false),
+                "not_responding": last_task_poll_secs.map(|v| v > 180).unwrap_or(true),
             })
         })
         .collect::<Vec<_>>();
@@ -640,6 +726,14 @@ fn collect_known_members(s: &ConnectorState) -> Vec<String> {
     members.sort();
     members.dedup();
     members
+}
+
+fn tier_from_level(level: u32) -> Tier {
+    match level {
+        1 => Tier::Tier1,
+        2 => Tier::Tier2,
+        n => Tier::TierN(n),
+    }
 }
 
 fn is_business_message(msg: &MessageTraceEvent) -> bool {
