@@ -9,8 +9,11 @@
 
   --teal:         #00e5b0;
   --teal-dim:     #00a07a;
+  --teal-bright:  #00ffcc;
+  /* reserved for vis-network node/edge colors (Tasks 5+) */
   --violet:       #7c3aff;
   --violet-dim:   #3d1d7f;
+  --violet-text:  #a78bfa;
   --amber:        #ffaa00;
   --coral:        #ff3355;
   --dim-blue:     #1a3a5c;
@@ -128,14 +131,14 @@ body {
 
 .btn-primary {
   background: var(--teal);
-  color: #020810;
+  color: var(--bg);
   border-color: var(--teal);
   font-weight: 700;
 }
 
 .btn-primary:hover {
-  background: #00ffcc;
-  border-color: #00ffcc;
+  background: var(--teal-bright);
+  border-color: var(--teal-bright);
   box-shadow: 0 0 16px rgba(0, 229, 176, 0.4);
 }
 
@@ -486,7 +489,7 @@ body {
 }
 
 .badge-teal    { background: rgba(0, 229, 176, 0.15); color: var(--teal);   border: 1px solid rgba(0, 229, 176, 0.3); }
-.badge-violet  { background: rgba(124, 58, 255, 0.15); color: #a78bfa;      border: 1px solid rgba(124, 58, 255, 0.3); }
+.badge-violet  { background: rgba(124, 58, 255, 0.15); color: var(--violet-text); border: 1px solid rgba(124, 58, 255, 0.3); }
 .badge-amber   { background: rgba(255, 170, 0, 0.15);  color: var(--amber); border: 1px solid rgba(255, 170, 0, 0.3); }
 .badge-coral   { background: rgba(255, 51, 85, 0.15);  color: var(--coral); border: 1px solid rgba(255, 51, 85, 0.3); }
 .badge-dim     { background: rgba(26, 58, 92, 0.5);    color: var(--text-muted); border: 1px solid var(--border-2); }
@@ -604,6 +607,15 @@ body {
   border-radius: 50%;
   background: var(--teal);
   cursor: pointer;
+}
+
+.timeline-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--teal);
+  cursor: pointer;
+  border: none;
 }
 
 /* ── Deliberation messages ───────────────── */
@@ -741,6 +753,7 @@ body {
 }
 
 /* ── Animations ──────────────────────────── */
+/* used by Header component for live-activity indicator */
 @keyframes pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.5; transform: scale(0.8); }
