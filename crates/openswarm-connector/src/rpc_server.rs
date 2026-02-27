@@ -168,6 +168,16 @@ async fn process_request(
             handle_inject_task(request_id, &request.params, state, network_handle).await
         }
         "swarm.get_hierarchy" => handle_get_hierarchy(request_id, state).await,
+        "swarm.get_board_status" => handle_get_board_status(request_id, state).await,
+        "swarm.get_deliberation" => {
+            handle_get_deliberation(request_id, &request.params, state).await
+        }
+        "swarm.get_ballots" => {
+            handle_get_ballots(request_id, &request.params, state).await
+        }
+        "swarm.get_irv_rounds" => {
+            handle_get_irv_rounds(request_id, &request.params, state).await
+        }
         _ => SwarmResponse::error(
             request_id,
             -32601, // Method not found
@@ -493,6 +503,7 @@ pub(crate) async fn handle_propose_plan(
                 .collect(),
             created_at: chrono::Utc::now(),
             deadline: None,
+            ..Default::default()
         });
 
         let task_tier_level = state
@@ -643,6 +654,7 @@ pub(crate) async fn handle_propose_plan(
                     .collect(),
                 created_at: chrono::Utc::now(),
                 deadline: None,
+                ..Default::default()
             },
         );
     }
@@ -1686,7 +1698,26 @@ pub(crate) async fn handle_inject_task(
 
     let mut state_guard = state.write().await;
     let epoch = state_guard.epoch_manager.current_epoch();
-    let task = openswarm_protocol::Task::new(description.clone(), 1, epoch);
+    let mut task = openswarm_protocol::Task::new(description.clone(), 1, epoch);
+    // Accept extended holonic task fields if provided
+    if let Some(v) = params.get("task_type").and_then(|v| v.as_str()) {
+        task.task_type = v.to_string();
+    }
+    if let Some(v) = params.get("horizon").and_then(|v| v.as_str()) {
+        task.horizon = v.to_string();
+    }
+    if let Some(arr) = params.get("capabilities_required").and_then(|v| v.as_array()) {
+        task.capabilities_required = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+    }
+    if let Some(v) = params.get("backtrack_allowed").and_then(|v| v.as_bool()) {
+        task.backtrack_allowed = v;
+    }
+    if let Some(arr) = params.get("knowledge_domains").and_then(|v| v.as_array()) {
+        task.knowledge_domains = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+    }
+    if let Some(arr) = params.get("tools_available").and_then(|v| v.as_array()) {
+        task.tools_available = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
+    }
     let task_id = task.task_id.clone();
 
     // Add task to the local task set (CRDT).
@@ -1845,4 +1876,103 @@ async fn handle_get_hierarchy(
             "epoch": state.epoch_manager.current_epoch(),
         }),
     )
+}
+
+/// Handle `swarm.get_board_status` - returns all active holons.
+async fn handle_get_board_status(
+    request_id: Option<String>,
+    state: &Arc<RwLock<ConnectorState>>,
+) -> SwarmResponse {
+    let state = state.read().await;
+    let holons: Vec<serde_json::Value> = state.active_holons.values().map(|h| {
+        serde_json::json!({
+            "task_id": h.task_id,
+            "chair": h.chair.to_string(),
+            "members": h.members.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
+            "adversarial_critic": h.adversarial_critic.as_ref().map(|a| a.to_string()),
+            "depth": h.depth,
+            "parent_holon": h.parent_holon,
+            "child_holons": h.child_holons,
+            "status": format!("{:?}", h.status),
+            "created_at": h.created_at,
+        })
+    }).collect();
+    SwarmResponse::success(request_id, serde_json::json!({ "holons": holons }))
+}
+
+/// Handle `swarm.get_deliberation` - returns deliberation messages for a task.
+async fn handle_get_deliberation(
+    request_id: Option<String>,
+    params: &serde_json::Value,
+    state: &Arc<RwLock<ConnectorState>>,
+) -> SwarmResponse {
+    let task_id = match params.get("task_id").and_then(|v| v.as_str()) {
+        Some(id) => id.to_string(),
+        None => return SwarmResponse::error(request_id, -32602, "task_id required".to_string()),
+    };
+    let state = state.read().await;
+    let messages: Vec<serde_json::Value> = state.deliberation_messages
+        .get(&task_id)
+        .map(|msgs| msgs.iter().map(|m| serde_json::json!({
+            "id": m.id,
+            "task_id": m.task_id,
+            "timestamp": m.timestamp,
+            "speaker": m.speaker.to_string(),
+            "round": m.round,
+            "message_type": format!("{:?}", m.message_type),
+            "content": m.content,
+            "referenced_plan_id": m.referenced_plan_id,
+            "critic_scores": m.critic_scores,
+        })).collect())
+        .unwrap_or_default();
+    SwarmResponse::success(request_id, serde_json::json!({ "task_id": task_id, "messages": messages }))
+}
+
+/// Handle `swarm.get_ballots` - returns ballot records for a task.
+async fn handle_get_ballots(
+    request_id: Option<String>,
+    params: &serde_json::Value,
+    state: &Arc<RwLock<ConnectorState>>,
+) -> SwarmResponse {
+    let task_id = match params.get("task_id").and_then(|v| v.as_str()) {
+        Some(id) => id.to_string(),
+        None => return SwarmResponse::error(request_id, -32602, "task_id required".to_string()),
+    };
+    let state = state.read().await;
+    let ballots: Vec<serde_json::Value> = state.ballot_records
+        .get(&task_id)
+        .map(|records| records.iter().map(|b| serde_json::json!({
+            "task_id": b.task_id,
+            "voter": b.voter.to_string(),
+            "rankings": b.rankings,
+            "critic_scores": b.critic_scores,
+            "timestamp": b.timestamp,
+            "irv_round_when_eliminated": b.irv_round_when_eliminated,
+        })).collect())
+        .unwrap_or_default();
+    SwarmResponse::success(request_id, serde_json::json!({ "task_id": task_id, "ballots": ballots }))
+}
+
+/// Handle `swarm.get_irv_rounds` - returns IRV round history for a task.
+async fn handle_get_irv_rounds(
+    request_id: Option<String>,
+    params: &serde_json::Value,
+    state: &Arc<RwLock<ConnectorState>>,
+) -> SwarmResponse {
+    let task_id = match params.get("task_id").and_then(|v| v.as_str()) {
+        Some(id) => id.to_string(),
+        None => return SwarmResponse::error(request_id, -32602, "task_id required".to_string()),
+    };
+    let state = state.read().await;
+    let rounds: Vec<serde_json::Value> = state.irv_rounds
+        .get(&task_id)
+        .map(|rounds| rounds.iter().map(|r| serde_json::json!({
+            "task_id": r.task_id,
+            "round_number": r.round_number,
+            "tallies": r.tallies,
+            "eliminated": r.eliminated,
+            "continuing_candidates": r.continuing_candidates,
+        })).collect())
+        .unwrap_or_default();
+    SwarmResponse::success(request_id, serde_json::json!({ "task_id": task_id, "irv_rounds": rounds }))
 }

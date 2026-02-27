@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# OpenSwarm Connector Instance Launcher
+# ASIP.Connector Instance Launcher
 # Automatically finds available ports and starts a new connector instance
 
 set -e
@@ -49,7 +49,7 @@ SWARM_ID="public"
 
 usage() {
     cat << EOF
-${GREEN}OpenSwarm Connector Instance Launcher${NC}
+${GREEN}ASIP.Connector Instance Launcher${NC}
 
 Usage: $0 [OPTIONS]
 
@@ -155,7 +155,7 @@ fi
 # Display connection information
 echo ""
 echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║         OpenSwarm Connector Instance Starting...          ║${NC}"
+echo -e "${GREEN}║         ASIP.Connector Instance Starting...          ║${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "${BLUE}Agent Name:${NC}     $AGENT_NAME"
@@ -233,7 +233,7 @@ if [ "$TUI_MODE" = false ]; then
         # Save connection info to a file for easy reference
         INFO_FILE="/tmp/openswarm-$AGENT_NAME-info.txt"
         cat > "$INFO_FILE" << INFOEOF
-OpenSwarm Connector: $AGENT_NAME
+ASIP.Connector: $AGENT_NAME
 Started: $(date)
 
 Peer ID: $PEER_ID

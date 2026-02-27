@@ -184,6 +184,16 @@ pub struct ConnectorState {
     pub known_swarms: std::collections::HashMap<String, SwarmRecord>,
     /// Swarm token for private swarm authentication (if any).
     pub swarm_token: Option<SwarmToken>,
+    /// Active holonic boards, keyed by task_id.
+    pub active_holons: std::collections::HashMap<String, HolonState>,
+    /// Deliberation messages per task (proposal submissions, critiques, synthesis).
+    pub deliberation_messages: std::collections::HashMap<String, Vec<DeliberationMessage>>,
+    /// Per-voter ballot records per task, for full visibility.
+    pub ballot_records: std::collections::HashMap<String, Vec<BallotRecord>>,
+    /// IRV round history per task (populated after voting completes).
+    pub irv_rounds: std::collections::HashMap<String, Vec<IrvRound>>,
+    /// Board invitation acceptances per task: task_id -> Vec<BoardAcceptParams>.
+    pub board_acceptances: std::collections::HashMap<String, Vec<BoardAcceptParams>>,
 }
 
 impl ConnectorState {
@@ -334,7 +344,7 @@ impl ConnectorState {
     }
 }
 
-/// The main ASCP Connector that orchestrates all subsystems.
+/// The main ASIP.Connector that orchestrates all subsystems.
 ///
 /// Created from a configuration, it initializes the network, hierarchy,
 /// consensus, and state modules, then runs the event loop that ties
@@ -469,6 +479,11 @@ impl OpenSwarmConnector {
             current_swarm_id,
             known_swarms,
             swarm_token,
+            active_holons: std::collections::HashMap::new(),
+            deliberation_messages: std::collections::HashMap::new(),
+            ballot_records: std::collections::HashMap::new(),
+            irv_rounds: std::collections::HashMap::new(),
+            board_acceptances: std::collections::HashMap::new(),
         };
 
         Ok(Self {
@@ -528,13 +543,13 @@ impl OpenSwarmConnector {
             state.push_log(
                 LogCategory::System,
                 format!(
-                    "ASCP Connector started (swarm: {} [{}])",
+                    "ASIP.Connector started (swarm: {} [{}])",
                     self.config.swarm.name, swarm_id_str
                 ),
             );
         }
 
-        tracing::info!("ASCP Connector is running");
+        tracing::info!("ASIP.Connector is running");
 
         // Take the event receiver out of self so we can use both in the loop.
         let mut event_rx = self
@@ -854,6 +869,23 @@ impl OpenSwarmConnector {
                         }
                     }
 
+                    // Create holon record for this task in Forming status
+                    let my_agent_id = state.agent_id.clone();
+                    let task_tier = params.task.tier_level;
+                    let parent_task_id = params.task.parent_task_id.clone();
+                    state.active_holons.entry(task_id.clone()).or_insert_with(|| HolonState {
+                        task_id: task_id.clone(),
+                        chair: my_agent_id,
+                        members: Vec::new(),
+                        adversarial_critic: None,
+                        depth: task_tier,
+                        parent_holon: parent_task_id,
+                        child_holons: Vec::new(),
+                        subtask_assignments: std::collections::HashMap::new(),
+                        status: HolonStatus::Forming,
+                        created_at: chrono::Utc::now(),
+                    });
+
                     tracing::info!(
                         task_id = %params.task.task_id,
                         my_tier = ?my_tier,
@@ -984,6 +1016,7 @@ impl OpenSwarmConnector {
                             subtasks: Vec::new(),
                             created_at: chrono::Utc::now(),
                             deadline: None,
+                            ..Default::default()
                         });
                     {
                         let rfp = state
@@ -1135,6 +1168,7 @@ impl OpenSwarmConnector {
                             subtasks: Vec::new(),
                             created_at: chrono::Utc::now(),
                             deadline: None,
+                            ..Default::default()
                         });
 
                     let should_queue_reveal = {
@@ -1257,14 +1291,38 @@ impl OpenSwarmConnector {
                     if let Some(voting) = state.voting_engines.get_mut(&task_id) {
                         let ranked_vote = RankedVote {
                             voter: voter.clone(),
-                            task_id: params.task_id,
+                            task_id: params.task_id.clone(),
                             epoch: params.epoch,
-                            rankings: params.rankings,
-                            critic_scores: params.critic_scores,
+                            rankings: params.rankings.clone(),
+                            critic_scores: params.critic_scores.clone(),
                         };
                         if let Err(e) = voting.record_vote(ranked_vote) {
                             tracing::warn!(error = %e, "Failed to record consensus vote");
                         }
+                    }
+                    // Record ballot for deliberation visibility
+                    state.ballot_records.entry(task_id.clone()).or_default().push(BallotRecord {
+                        task_id: task_id.clone(),
+                        voter: voter.clone(),
+                        rankings: params.rankings,
+                        critic_scores: params.critic_scores,
+                        timestamp: chrono::Utc::now(),
+                        irv_round_when_eliminated: None,
+                    });
+                    // Also record as a deliberation message (proposal score phase)
+                    {
+                        let rankings_str = format!("Rankings: {}", rankings_preview);
+                        state.deliberation_messages.entry(task_id.clone()).or_default().push(DeliberationMessage {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            task_id: task_id.clone(),
+                            timestamp: chrono::Utc::now(),
+                            speaker: voter.clone(),
+                            round: 2,
+                            message_type: DeliberationType::CritiqueFeedback,
+                            content: rankings_str,
+                            referenced_plan_id: None,
+                            critic_scores: None,
+                        });
                     }
                     state.push_task_timeline_event(
                         &task_id,
@@ -1320,6 +1378,26 @@ impl OpenSwarmConnector {
                     state.mark_member_submitted_result(params.agent_id.as_str());
                     state.bump_tasks_processed(params.agent_id.as_str());
                     state.mark_member_seen(params.agent_id.as_str());
+                    // Update holon status to Done on result submission
+                    if let Some(holon) = state.active_holons.get_mut(&params.task_id) {
+                        holon.status = HolonStatus::Done;
+                    }
+                    // Record synthesis result as deliberation message
+                    if let Some(text) = state.task_result_text.get(&params.task_id).cloned() {
+                        if !text.is_empty() {
+                            state.deliberation_messages.entry(params.task_id.clone()).or_default().push(DeliberationMessage {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                task_id: params.task_id.clone(),
+                                timestamp: chrono::Utc::now(),
+                                speaker: params.agent_id.clone(),
+                                round: 3,
+                                message_type: DeliberationType::SynthesisResult,
+                                content: text,
+                                referenced_plan_id: None,
+                                critic_scores: None,
+                            });
+                        }
+                    }
                     // Store the artifact content CID as leaf content bytes in the DAG.
                     state.merkle_dag.add_leaf(
                         params.task_id.clone(),
@@ -1437,6 +1515,145 @@ impl OpenSwarmConnector {
                     state.push_log(
                         LogCategory::Peer,
                         format!("{} left swarm {}", params.agent_id, params.swarm_id),
+                    );
+                }
+            }
+            Some(ProtocolMethod::BoardInvite) => {
+                if let Ok(params) = serde_json::from_value::<BoardInviteParams>(message.params) {
+                    let mut state = self.state.write().await;
+                    // Create or update holon in Forming state
+                    let holon = state.active_holons.entry(params.task_id.clone()).or_insert_with(|| {
+                        HolonState {
+                            task_id: params.task_id.clone(),
+                            chair: params.chair.clone(),
+                            members: Vec::new(),
+                            adversarial_critic: None,
+                            depth: params.depth,
+                            parent_holon: None,
+                            child_holons: Vec::new(),
+                            subtask_assignments: std::collections::HashMap::new(),
+                            status: HolonStatus::Forming,
+                            created_at: chrono::Utc::now(),
+                        }
+                    });
+                    holon.status = HolonStatus::Forming;
+                    state.push_log(
+                        LogCategory::Task,
+                        format!(
+                            "Board invite for task {} (depth={}, chair={}, complexity={:.2})",
+                            params.task_id, params.depth, params.chair, params.complexity_estimate
+                        ),
+                    );
+                }
+            }
+            Some(ProtocolMethod::BoardAccept) => {
+                if let Ok(params) = serde_json::from_value::<BoardAcceptParams>(message.params) {
+                    let mut state = self.state.write().await;
+                    state.board_acceptances
+                        .entry(params.task_id.clone())
+                        .or_default()
+                        .push(params.clone());
+                    if let Some(holon) = state.active_holons.get_mut(&params.task_id) {
+                        if !holon.members.iter().any(|m| m == &params.agent_id) {
+                            holon.members.push(params.agent_id.clone());
+                        }
+                    }
+                    state.push_log(
+                        LogCategory::Task,
+                        format!("Board accept: {} for task {}", params.agent_id, params.task_id),
+                    );
+                }
+            }
+            Some(ProtocolMethod::BoardDecline) => {
+                if let Ok(params) = serde_json::from_value::<BoardDeclineParams>(message.params) {
+                    let mut state = self.state.write().await;
+                    state.push_log(
+                        LogCategory::Task,
+                        format!("Board decline: {} for task {}", params.agent_id, params.task_id),
+                    );
+                }
+            }
+            Some(ProtocolMethod::BoardReady) => {
+                if let Ok(params) = serde_json::from_value::<BoardReadyParams>(message.params) {
+                    let mut state = self.state.write().await;
+                    let holon = state.active_holons.entry(params.task_id.clone()).or_insert_with(|| {
+                        HolonState {
+                            task_id: params.task_id.clone(),
+                            chair: params.chair_id.clone(),
+                            members: params.members.clone(),
+                            adversarial_critic: params.adversarial_critic.clone(),
+                            depth: 0,
+                            parent_holon: None,
+                            child_holons: Vec::new(),
+                            subtask_assignments: std::collections::HashMap::new(),
+                            status: HolonStatus::Deliberating,
+                            created_at: chrono::Utc::now(),
+                        }
+                    });
+                    holon.chair = params.chair_id.clone();
+                    holon.members = params.members.clone();
+                    holon.adversarial_critic = params.adversarial_critic.clone();
+                    holon.status = HolonStatus::Deliberating;
+                    state.push_log(
+                        LogCategory::Task,
+                        format!(
+                            "Board ready for task {} ({} members, chair={})",
+                            params.task_id, params.members.len(), params.chair_id
+                        ),
+                    );
+                }
+            }
+            Some(ProtocolMethod::BoardDissolve) => {
+                if let Ok(params) = serde_json::from_value::<BoardDissolveParams>(message.params) {
+                    let mut state = self.state.write().await;
+                    if let Some(holon) = state.active_holons.get_mut(&params.task_id) {
+                        holon.status = HolonStatus::Done;
+                    }
+                    state.push_log(
+                        LogCategory::Task,
+                        format!("Board dissolved for task {}", params.task_id),
+                    );
+                }
+            }
+            Some(ProtocolMethod::DiscussionCritique) => {
+                if let Ok(params) = serde_json::from_value::<DiscussionCritiqueParams>(message.params) {
+                    let mut state = self.state.write().await;
+                    // Store as deliberation message
+                    let msg = DeliberationMessage {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        task_id: params.task_id.clone(),
+                        timestamp: chrono::Utc::now(),
+                        speaker: params.voter_id.clone(),
+                        round: params.round,
+                        message_type: DeliberationType::CritiqueFeedback,
+                        content: params.content.clone(),
+                        referenced_plan_id: None,
+                        critic_scores: Some(params.plan_scores.clone()),
+                    };
+                    state.deliberation_messages
+                        .entry(params.task_id.clone())
+                        .or_default()
+                        .push(msg);
+                    // Also record in the rfp coordinator
+                    if let Some(rfp) = state.rfp_coordinators.get_mut(&params.task_id) {
+                        let _ = rfp.record_critique(
+                            params.voter_id.clone(),
+                            params.plan_scores.clone(),
+                            params.content.clone(),
+                        );
+                    }
+                    // Update holon status to Voting after critique
+                    if let Some(holon) = state.active_holons.get_mut(&params.task_id) {
+                        if matches!(holon.status, HolonStatus::Deliberating) {
+                            holon.status = HolonStatus::Voting;
+                        }
+                    }
+                    state.push_log(
+                        LogCategory::Vote,
+                        format!(
+                            "Critique from {} for task {} (round {}, {} plan scores)",
+                            params.voter_id, params.task_id, params.round, params.plan_scores.len()
+                        ),
                     );
                 }
             }
@@ -1766,8 +1983,17 @@ impl OpenSwarmConnector {
                         Some(v) => v,
                         None => continue,
                     };
-                    voting_engine.run_irv()
+                    let result = voting_engine.run_irv();
+                    // Persist IRV rounds for API visibility
+                    let rounds = voting_engine.irv_rounds().to_vec();
+                    (result, rounds)
                 };
+
+                let (irv_result, irv_rounds) = irv_result;
+                // Persist IRV rounds to state
+                if !irv_rounds.is_empty() {
+                    state.irv_rounds.insert(task_id.clone(), irv_rounds);
+                }
 
                 match irv_result {
                     Ok(result) => {
@@ -1812,6 +2038,11 @@ impl OpenSwarmConnector {
                     // Update task status to InProgress
                     if let Some(task) = state.task_details.get_mut(&task_id) {
                         task.status = TaskStatus::InProgress;
+                    }
+
+                    // Update holon status to Executing
+                    if let Some(holon) = state.active_holons.get_mut(&task_id) {
+                        holon.status = HolonStatus::Executing;
                     }
 
                     tracing::info!(
@@ -2063,6 +2294,8 @@ impl OpenSwarmConnector {
                 deadline: Some(
                     chrono::Utc::now() + chrono::Duration::seconds(EXECUTION_ASSIGNMENT_TIMEOUT_SECS),
                 ),
+                capabilities_required: subtask_spec.required_capabilities.clone(),
+                ..Default::default()
             };
 
             // Store subtask in state
@@ -2608,7 +2841,7 @@ mod tests {
             "Connector should be Running after start"
         );
         assert!(
-            s.event_log.iter().any(|e| e.message.contains("ASCP Connector started")),
+            s.event_log.iter().any(|e| e.message.contains("ASIP.Connector started")),
             "Should have startup log entry"
         );
     }

@@ -5,7 +5,7 @@ The `run-agent.sh` script is the easiest way to start a complete OpenSwarm agent
 ## What It Does
 
 `run-agent.sh` starts two processes:
-1. **OpenSwarm Connector** - Handles P2P networking, hierarchy management, and RPC API
+1. **ASIP.Connector** - Handles P2P networking, hierarchy management, and RPC API
 2. **AI Agent** - Connects to the connector and performs autonomous swarm operations
 
 ## Basic Usage

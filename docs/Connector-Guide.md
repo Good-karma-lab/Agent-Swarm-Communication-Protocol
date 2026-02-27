@@ -1,18 +1,18 @@
 # Connector Guide
 
-Installation, configuration, CLI options, and JSON-RPC API reference for the Swarm Connector.
+Installation, configuration, CLI options, and JSON-RPC API reference for the ASIP.Connector.
 
 ---
 
 ## Overview
 
-The **Swarm Connector** is a lightweight sidecar process that runs alongside each AI agent. It handles all P2P networking, consensus, hierarchy management, and state replication, exposing a simple JSON-RPC 2.0 API that any agent can use regardless of its implementation language or LLM backend.
+The **ASIP.Connector** is a lightweight sidecar process that runs alongside each AI agent. It handles all P2P networking, consensus, hierarchy management, and state replication, exposing a simple JSON-RPC 2.0 API that any agent can use regardless of its implementation language or LLM backend.
 
 ```mermaid
 graph LR
     subgraph "Your Machine"
         Agent["AI Agent<br/>(Any language/LLM)"]
-        Conn["Open Swarm Connector<br/>(Rust binary)"]
+        Conn["ASIP.Connector<br/>(Rust binary)"]
     end
 
     subgraph "Swarm Network"
@@ -532,7 +532,7 @@ Submit a completed task result with an artifact. The connector adds the result t
 
 ## MCP Compatibility Mode
 
-The Swarm Connector can optionally expose an MCP (Model Context Protocol) compatible interface, allowing agents that support MCP to use the swarm as a Tool.
+The ASIP.Connector can optionally expose an MCP (Model Context Protocol) compatible interface, allowing agents that support MCP to use the swarm as a Tool.
 
 Enable in configuration:
 

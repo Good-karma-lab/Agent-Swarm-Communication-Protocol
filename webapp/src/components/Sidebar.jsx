@@ -14,7 +14,7 @@ export default function Sidebar({
   tab,
   setTab
 }) {
-  const tabs = ['overview', 'hierarchy', 'voting', 'messages', 'task', 'topology', 'audit', 'ideas']
+  const tabs = ['overview', 'hierarchy', 'voting', 'messages', 'task', 'topology', 'audit', 'ideas', 'holons', 'deliberation']
   return (
     <aside className="side">
       <h1>OpenSwarm Web Console</h1>

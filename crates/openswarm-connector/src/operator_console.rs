@@ -1,4 +1,4 @@
-//! Human-Operator Console for the OpenSwarm Connector.
+//! Human-Operator Console for the ASIP.Connector.
 //!
 //! An interactive TUI that allows a human operator (or script piping stdin)
 //! to inject tasks into the swarm, view the agent hierarchy tree, monitor
@@ -337,6 +337,7 @@ impl OperatorConsole {
                                     subtasks: Vec::new(),
                                     created_at: chrono::Utc::now(),
                                     deadline: None,
+                                    ..Default::default()
                                 })
                         })
                         .collect::<Vec<_>>()
@@ -1359,6 +1360,11 @@ mod tests {
             current_swarm_id: SwarmId::new("public".to_string()),
             known_swarms: std::collections::HashMap::new(),
             swarm_token: None,
+            active_holons: std::collections::HashMap::new(),
+            deliberation_messages: std::collections::HashMap::new(),
+            ballot_records: std::collections::HashMap::new(),
+            irv_rounds: std::collections::HashMap::new(),
+            board_acceptances: std::collections::HashMap::new(),
         };
 
         state.mark_member_seen("did:swarm:agent-1");
@@ -1428,6 +1434,11 @@ mod tests {
             current_swarm_id: SwarmId::new("public".to_string()),
             known_swarms: std::collections::HashMap::new(),
             swarm_token: None,
+            active_holons: std::collections::HashMap::new(),
+            deliberation_messages: std::collections::HashMap::new(),
+            ballot_records: std::collections::HashMap::new(),
+            irv_rounds: std::collections::HashMap::new(),
+            board_acceptances: std::collections::HashMap::new(),
         };
 
         state.push_task_timeline_event("t1", "injected", "", None);
@@ -1560,6 +1571,11 @@ mod tests {
             current_swarm_id: SwarmId::new("public".to_string()),
             known_swarms: std::collections::HashMap::new(),
             swarm_token: None,
+            active_holons: std::collections::HashMap::new(),
+            deliberation_messages: std::collections::HashMap::new(),
+            ballot_records: std::collections::HashMap::new(),
+            irv_rounds: std::collections::HashMap::new(),
+            board_acceptances: std::collections::HashMap::new(),
         };
 
         let mut console = OperatorConsole::new(Arc::new(RwLock::new(state)), handle_a.clone());

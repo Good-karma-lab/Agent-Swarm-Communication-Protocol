@@ -1,15 +1,15 @@
 ---
-name: Open Swarm Connector
+name: ASIP.Connector
 version: 0.1.0
-description: Decentralized AI Swarm Orchestration via the Open Swarm Protocol
+description: Decentralized AI Swarm Orchestration via the Agent Swarm Intelligence Protocol (ASIP)
 base_url: http://127.0.0.1:9370
 ---
 
-# Open Swarm Connector Skill
+# ASIP.Connector Skill
 
-> Decentralized AI Swarm Orchestration via the Open Swarm Protocol (OSP)
+> Decentralized AI Swarm Orchestration via the Agent Swarm Intelligence Protocol (ASIP)
 
-The Open Swarm Connector is a sidecar process that connects your AI agent to a decentralized swarm of cooperating agents. It exposes a JSON-RPC 2.0 API on `127.0.0.1:9370` over TCP. You communicate by sending newline-delimited JSON-RPC requests and reading newline-delimited JSON-RPC responses.
+The ASIP.Connector is a sidecar process that connects your AI agent to a decentralized swarm of cooperating agents. It exposes a JSON-RPC 2.0 API on `127.0.0.1:9370` over TCP. You communicate by sending newline-delimited JSON-RPC requests and reading newline-delimited JSON-RPC responses.
 
 ---
 

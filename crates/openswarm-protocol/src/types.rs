@@ -29,8 +29,9 @@ impl Tier {
 }
 
 /// Current status of a task in the swarm.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum TaskStatus {
+    #[default]
     /// Task has been created but not yet assigned
     Pending,
     /// RFP phase: proposals being collected
@@ -60,6 +61,18 @@ pub struct Task {
     pub subtasks: Vec<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub deadline: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    pub task_type: String,
+    #[serde(default)]
+    pub horizon: String,
+    #[serde(default)]
+    pub capabilities_required: Vec<String>,
+    #[serde(default)]
+    pub backtrack_allowed: bool,
+    #[serde(default)]
+    pub knowledge_domains: Vec<String>,
+    #[serde(default)]
+    pub tools_available: Vec<String>,
 }
 
 impl Task {
@@ -75,7 +88,19 @@ impl Task {
             subtasks: Vec::new(),
             created_at: chrono::Utc::now(),
             deadline: None,
+            task_type: String::new(),
+            horizon: String::new(),
+            capabilities_required: Vec::new(),
+            backtrack_allowed: false,
+            knowledge_domains: Vec::new(),
+            tools_available: Vec::new(),
         }
+    }
+}
+
+impl Default for Task {
+    fn default() -> Self {
+        Self::new(String::new(), 1, 0)
     }
 }
 
@@ -322,6 +347,78 @@ impl SwarmInfo {
     }
 }
 
+// ── Holonic Swarm Types ──
+
+/// Status of a holonic board.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum HolonStatus {
+    Forming,
+    Deliberating,
+    Voting,
+    Executing,
+    Synthesizing,
+    Done,
+}
+
+/// State of a dynamic holonic board formed for a task.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HolonState {
+    pub task_id: String,
+    pub chair: AgentId,
+    pub members: Vec<AgentId>,
+    pub adversarial_critic: Option<AgentId>,
+    pub depth: u32,
+    pub parent_holon: Option<String>,
+    pub child_holons: Vec<String>,
+    pub subtask_assignments: std::collections::HashMap<String, AgentId>,
+    pub status: HolonStatus,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Type of deliberation message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeliberationType {
+    ProposalSubmission,
+    CritiqueFeedback,
+    Rebuttal,
+    SynthesisResult,
+}
+
+/// A message in the deliberation thread of a holon board.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeliberationMessage {
+    pub id: String,
+    pub task_id: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub speaker: AgentId,
+    pub round: u32,
+    pub message_type: DeliberationType,
+    pub content: String,
+    pub referenced_plan_id: Option<String>,
+    pub critic_scores: Option<std::collections::HashMap<String, CriticScore>>,
+}
+
+/// Per-voter ballot record for full deliberation visibility.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BallotRecord {
+    pub task_id: String,
+    pub voter: AgentId,
+    pub rankings: Vec<String>,
+    pub critic_scores: std::collections::HashMap<String, CriticScore>,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub irv_round_when_eliminated: Option<u32>,
+}
+
+/// IRV round history for debugging and UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IrvRound {
+    pub task_id: String,
+    pub round_number: u32,
+    pub tallies: std::collections::HashMap<String, usize>,
+    pub eliminated: Option<String>,
+    pub continuing_candidates: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,5 +499,329 @@ mod tests {
         let info = SwarmInfo::new_private("My Swarm".to_string(), creator, "desc".to_string());
         assert!(!info.is_public);
         assert!(!info.swarm_id.is_public());
+    }
+
+    #[test]
+    fn test_task_new_fields_default() {
+        let task = Task::new("Test holonic task".into(), 1, 1);
+        assert_eq!(task.task_type, "");
+        assert_eq!(task.horizon, "");
+        assert!(task.capabilities_required.is_empty());
+        assert!(!task.backtrack_allowed);
+        assert!(task.knowledge_domains.is_empty());
+        assert!(task.tools_available.is_empty());
+    }
+
+    #[test]
+    fn test_holon_status_variants() {
+        let status = HolonStatus::Forming;
+        assert_eq!(status, HolonStatus::Forming);
+        assert_ne!(status, HolonStatus::Done);
+    }
+
+    #[test]
+    fn test_holon_state_serialization_roundtrip() {
+        use crate::identity::AgentId;
+        use std::collections::HashMap;
+
+        let chair = AgentId::new("did:swarm:chair".to_string());
+        let member1 = AgentId::new("did:swarm:member1".to_string());
+        let critic = AgentId::new("did:swarm:critic".to_string());
+
+        let mut subtask_assignments = HashMap::new();
+        subtask_assignments.insert("subtask-1".to_string(), member1.clone());
+
+        let holon = HolonState {
+            task_id: "task-abc".to_string(),
+            chair: chair.clone(),
+            members: vec![member1.clone(), critic.clone()],
+            adversarial_critic: Some(critic.clone()),
+            depth: 2,
+            parent_holon: Some("parent-task-id".to_string()),
+            child_holons: vec!["child-1".to_string(), "child-2".to_string()],
+            subtask_assignments,
+            status: HolonStatus::Deliberating,
+            created_at: chrono::Utc::now(),
+        };
+
+        let json = serde_json::to_string(&holon).unwrap();
+        let restored: HolonState = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.task_id, "task-abc");
+        assert_eq!(restored.chair, chair);
+        assert_eq!(restored.members.len(), 2);
+        assert_eq!(restored.adversarial_critic, Some(critic));
+        assert_eq!(restored.depth, 2);
+        assert_eq!(restored.parent_holon, Some("parent-task-id".to_string()));
+        assert_eq!(restored.child_holons.len(), 2);
+        assert_eq!(restored.subtask_assignments.len(), 1);
+        assert_eq!(restored.status, HolonStatus::Deliberating);
+    }
+
+    #[test]
+    fn test_holon_state_no_critic_no_parent() {
+        let chair = AgentId::new("did:swarm:chair".to_string());
+        let holon = HolonState {
+            task_id: "root-task".to_string(),
+            chair: chair.clone(),
+            members: vec![chair.clone()],
+            adversarial_critic: None,
+            depth: 0,
+            parent_holon: None,
+            child_holons: vec![],
+            subtask_assignments: std::collections::HashMap::new(),
+            status: HolonStatus::Forming,
+            created_at: chrono::Utc::now(),
+        };
+
+        let json = serde_json::to_string(&holon).unwrap();
+        let restored: HolonState = serde_json::from_str(&json).unwrap();
+        assert!(restored.adversarial_critic.is_none());
+        assert!(restored.parent_holon.is_none());
+        assert_eq!(restored.depth, 0);
+        assert_eq!(restored.status, HolonStatus::Forming);
+    }
+
+    #[test]
+    fn test_deliberation_message_serialization_roundtrip() {
+        use std::collections::HashMap;
+
+        let speaker = AgentId::new("did:swarm:speaker".to_string());
+        let mut scores = HashMap::new();
+        scores.insert("plan-1".to_string(), CriticScore {
+            feasibility: 0.8,
+            parallelism: 0.7,
+            completeness: 0.9,
+            risk: 0.2,
+        });
+
+        let msg = DeliberationMessage {
+            id: "msg-uuid-123".to_string(),
+            task_id: "task-xyz".to_string(),
+            timestamp: chrono::Utc::now(),
+            speaker: speaker.clone(),
+            round: 2,
+            message_type: DeliberationType::CritiqueFeedback,
+            content: "Plan 1 has insufficient parallelism for subtask 3".to_string(),
+            referenced_plan_id: Some("plan-1".to_string()),
+            critic_scores: Some(scores),
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        let restored: DeliberationMessage = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.id, "msg-uuid-123");
+        assert_eq!(restored.task_id, "task-xyz");
+        assert_eq!(restored.speaker, speaker);
+        assert_eq!(restored.round, 2);
+        assert_eq!(restored.message_type, DeliberationType::CritiqueFeedback);
+        assert!(restored.content.contains("parallelism"));
+        assert_eq!(restored.referenced_plan_id, Some("plan-1".to_string()));
+        let scores = restored.critic_scores.unwrap();
+        assert!((scores["plan-1"].feasibility - 0.8).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_deliberation_message_proposal_submission() {
+        let speaker = AgentId::new("did:swarm:proposer".to_string());
+        let msg = DeliberationMessage {
+            id: "msg-1".to_string(),
+            task_id: "task-1".to_string(),
+            timestamp: chrono::Utc::now(),
+            speaker,
+            round: 1,
+            message_type: DeliberationType::ProposalSubmission,
+            content: "My proposal for decomposing the task".to_string(),
+            referenced_plan_id: None,
+            critic_scores: None,
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        let restored: DeliberationMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.message_type, DeliberationType::ProposalSubmission);
+        assert!(restored.critic_scores.is_none());
+        assert!(restored.referenced_plan_id.is_none());
+    }
+
+    #[test]
+    fn test_deliberation_type_all_variants_serialize() {
+        let types = vec![
+            DeliberationType::ProposalSubmission,
+            DeliberationType::CritiqueFeedback,
+            DeliberationType::Rebuttal,
+            DeliberationType::SynthesisResult,
+        ];
+        for t in types {
+            let json = serde_json::to_string(&t).unwrap();
+            let restored: DeliberationType = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, t);
+        }
+    }
+
+    #[test]
+    fn test_ballot_record_serialization_roundtrip() {
+        use std::collections::HashMap;
+
+        let voter = AgentId::new("did:swarm:voter".to_string());
+        let mut critic_scores = HashMap::new();
+        critic_scores.insert("plan-A".to_string(), CriticScore {
+            feasibility: 0.9,
+            parallelism: 0.8,
+            completeness: 0.85,
+            risk: 0.1,
+        });
+        critic_scores.insert("plan-B".to_string(), CriticScore {
+            feasibility: 0.6,
+            parallelism: 0.5,
+            completeness: 0.7,
+            risk: 0.3,
+        });
+
+        let record = BallotRecord {
+            task_id: "task-vote".to_string(),
+            voter: voter.clone(),
+            rankings: vec!["plan-A".to_string(), "plan-B".to_string()],
+            critic_scores,
+            timestamp: chrono::Utc::now(),
+            irv_round_when_eliminated: Some(2),
+        };
+
+        let json = serde_json::to_string(&record).unwrap();
+        let restored: BallotRecord = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.task_id, "task-vote");
+        assert_eq!(restored.voter, voter);
+        assert_eq!(restored.rankings, vec!["plan-A", "plan-B"]);
+        assert_eq!(restored.critic_scores.len(), 2);
+        assert_eq!(restored.irv_round_when_eliminated, Some(2));
+        assert!((restored.critic_scores["plan-A"].feasibility - 0.9).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_ballot_record_no_elimination() {
+        let voter = AgentId::new("did:swarm:winner".to_string());
+        let record = BallotRecord {
+            task_id: "task-1".to_string(),
+            voter,
+            rankings: vec!["plan-A".to_string()],
+            critic_scores: std::collections::HashMap::new(),
+            timestamp: chrono::Utc::now(),
+            irv_round_when_eliminated: None,
+        };
+
+        let json = serde_json::to_string(&record).unwrap();
+        let restored: BallotRecord = serde_json::from_str(&json).unwrap();
+        assert!(restored.irv_round_when_eliminated.is_none());
+    }
+
+    #[test]
+    fn test_irv_round_serialization_roundtrip() {
+        use std::collections::HashMap;
+
+        let mut tallies = HashMap::new();
+        tallies.insert("plan-A".to_string(), 3usize);
+        tallies.insert("plan-B".to_string(), 2usize);
+        tallies.insert("plan-C".to_string(), 1usize);
+
+        let round = IrvRound {
+            task_id: "task-irv".to_string(),
+            round_number: 1,
+            tallies,
+            eliminated: Some("plan-C".to_string()),
+            continuing_candidates: vec!["plan-A".to_string(), "plan-B".to_string()],
+        };
+
+        let json = serde_json::to_string(&round).unwrap();
+        let restored: IrvRound = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.task_id, "task-irv");
+        assert_eq!(restored.round_number, 1);
+        assert_eq!(restored.tallies.len(), 3);
+        assert_eq!(restored.tallies["plan-A"], 3);
+        assert_eq!(restored.eliminated, Some("plan-C".to_string()));
+        assert_eq!(restored.continuing_candidates.len(), 2);
+    }
+
+    #[test]
+    fn test_irv_round_final_no_elimination() {
+        use std::collections::HashMap;
+        let mut tallies = HashMap::new();
+        tallies.insert("plan-A".to_string(), 5usize);
+
+        let round = IrvRound {
+            task_id: "task-final".to_string(),
+            round_number: 3,
+            tallies,
+            eliminated: None,
+            continuing_candidates: vec!["plan-A".to_string()],
+        };
+
+        let json = serde_json::to_string(&round).unwrap();
+        let restored: IrvRound = serde_json::from_str(&json).unwrap();
+        assert!(restored.eliminated.is_none());
+        assert_eq!(restored.round_number, 3);
+    }
+
+    #[test]
+    fn test_task_serialization_with_new_fields() {
+        let mut task = Task::new("Research cold fusion pathways".into(), 1, 5);
+        task.task_type = "scientific_research".to_string();
+        task.horizon = "long".to_string();
+        task.capabilities_required = vec!["physics".to_string(), "chemistry".to_string()];
+        task.backtrack_allowed = true;
+        task.knowledge_domains = vec!["nuclear-physics".to_string()];
+        task.tools_available = vec!["pubmed_search".to_string(), "arxiv_query".to_string()];
+
+        let json = serde_json::to_string(&task).unwrap();
+        let restored: Task = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.task_type, "scientific_research");
+        assert_eq!(restored.horizon, "long");
+        assert_eq!(restored.capabilities_required, vec!["physics", "chemistry"]);
+        assert!(restored.backtrack_allowed);
+        assert_eq!(restored.knowledge_domains, vec!["nuclear-physics"]);
+        assert_eq!(restored.tools_available.len(), 2);
+    }
+
+    #[test]
+    fn test_task_deserialization_missing_new_fields_defaults() {
+        // Old-format task JSON without new fields should deserialize with defaults
+        let json = r#"{
+            "task_id": "old-task-id",
+            "parent_task_id": null,
+            "epoch": 1,
+            "status": "Pending",
+            "description": "Legacy task",
+            "assigned_to": null,
+            "tier_level": 1,
+            "subtasks": [],
+            "created_at": "2025-01-01T00:00:00Z",
+            "deadline": null
+        }"#;
+
+        let task: Task = serde_json::from_str(json).unwrap();
+        assert_eq!(task.task_type, "");
+        assert_eq!(task.horizon, "");
+        assert!(task.capabilities_required.is_empty());
+        assert!(!task.backtrack_allowed);
+        assert!(task.knowledge_domains.is_empty());
+        assert!(task.tools_available.is_empty());
+    }
+
+    #[test]
+    fn test_holon_status_all_variants_serialize() {
+        let statuses = vec![
+            HolonStatus::Forming,
+            HolonStatus::Deliberating,
+            HolonStatus::Voting,
+            HolonStatus::Executing,
+            HolonStatus::Synthesizing,
+            HolonStatus::Done,
+        ];
+        for status in statuses {
+            let json = serde_json::to_string(&status).unwrap();
+            let restored: HolonStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored, status);
+        }
     }
 }

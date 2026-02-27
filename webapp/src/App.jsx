@@ -10,6 +10,8 @@ import TaskForensicsPanel from './components/TaskForensicsPanel'
 import TopologyPanel from './components/TopologyPanel'
 import AuditPanel from './components/AuditPanel'
 import IdeasPanel from './components/IdeasPanel'
+import DeliberationPanel from './components/DeliberationPanel'
+import HolonTreePanel from './components/HolonTreePanel'
 
 export default function App() {
   const [tab, setTab] = useState('overview')
@@ -30,9 +32,11 @@ export default function App() {
   const [operatorToken, setOperatorToken] = useState(localStorage.getItem('openswarm.web.token') || '')
   const [submitError, setSubmitError] = useState('')
   const [live, setLive] = useState({ active_tasks: 0, known_agents: 0, messages: [], events: [] })
+  const [holons, setHolons] = useState([])
+  const [taskBallots, setTaskBallots] = useState({ ballots: [], irv_rounds: [] })
 
   const refresh = useCallback(async () => {
-    const [h, v, m, t, ag, f, tp, r, a, au] = await Promise.all([
+    const [h, v, m, t, ag, f, tp, r, a, au, hl] = await Promise.all([
       api.hierarchy(),
       api.voting(),
       api.messages(),
@@ -42,7 +46,8 @@ export default function App() {
       api.topology(),
       api.recommendations(),
       api.audit(),
-      api.authStatus()
+      api.authStatus(),
+      api.holons().catch(() => []),
     ])
     setHierarchy(h)
     setVoting(v)
@@ -54,6 +59,7 @@ export default function App() {
     setRecommendations(r)
     setAudit(a)
     setAuth(au)
+    setHolons(hl)
   }, [])
 
   usePolling(refresh, 5000)
@@ -92,9 +98,14 @@ export default function App() {
     const effectiveTaskId = (requestedTaskId || taskId || '').trim()
     if (!effectiveTaskId) return
     if (requestedTaskId) setTaskId(effectiveTaskId)
-    const [trace, votingDetail] = await Promise.all([api.taskTimeline(effectiveTaskId), api.votingTask(effectiveTaskId)])
+    const [trace, votingDetail, ballots] = await Promise.all([
+      api.taskTimeline(effectiveTaskId),
+      api.votingTask(effectiveTaskId),
+      api.taskBallots(effectiveTaskId).catch(() => ({ ballots: [], irv_rounds: [] })),
+    ])
     setTaskTrace(trace)
     setTaskVoting(votingDetail)
+    setTaskBallots(ballots)
   }
 
   return (
@@ -119,12 +130,14 @@ export default function App() {
       <main className="main">
         {tab === 'overview' ? <OverviewPanel flow={flow} live={live} voting={voting} messages={messages} tasks={tasks} agents={agents} /> : null}
         {tab === 'hierarchy' ? <HierarchyTree nodes={hierarchy.nodes} /> : null}
-        {tab === 'voting' ? <VotingPanel voting={voting} /> : null}
+        {tab === 'voting' ? <VotingPanel voting={voting} taskVoting={taskBallots} /> : null}
         {tab === 'messages' ? <MessagesPanel messages={messages} /> : null}
         {tab === 'task' ? <TaskForensicsPanel taskTrace={taskTrace} tasks={tasks.tasks || []} taskId={taskId} setTaskId={setTaskId} loadTrace={loadTrace} taskVoting={taskVoting} /> : null}
         {tab === 'topology' ? <TopologyPanel topology={topology} /> : null}
         {tab === 'audit' ? <AuditPanel audit={audit} /> : null}
         {tab === 'ideas' ? <IdeasPanel recommendations={recommendations} /> : null}
+        {tab === 'holons' ? <HolonTreePanel holons={holons} /> : null}
+        {tab === 'deliberation' ? <DeliberationPanel taskId={taskId} /> : null}
       </main>
     </div>
   )

@@ -360,4 +360,4 @@ Connections that are idle for more than **60 seconds** (configurable via `idle_c
 
 - [SKILL.md](./SKILL.md) -- Complete JSON-RPC API reference with request/response examples
 - [HEARTBEAT.md](./HEARTBEAT.md) -- Recommended polling cadence and state monitoring
-- [Open Swarm Protocol specification](https://github.com/Good-karma-lab/OpenSwarm) -- Full protocol documentation
+- [Agent Swarm Intelligence Protocol (ASIP) specification](https://github.com/Good-karma-lab/OpenSwarm) -- Full protocol documentation

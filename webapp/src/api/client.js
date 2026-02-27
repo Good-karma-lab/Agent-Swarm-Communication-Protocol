@@ -32,5 +32,10 @@ export const api = {
         'x-ops-token': token || ''
       },
       body: JSON.stringify({ description })
-    })
+    }),
+  holons: () => fetchJson('/api/holons').then(d => d.holons || []),
+  holonDetail: (taskId) => fetchJson(`/api/holons/${taskId}`),
+  taskDeliberation: (taskId) => fetchJson(`/api/tasks/${taskId}/deliberation`),
+  taskBallots: (taskId) => fetchJson(`/api/tasks/${taskId}/ballots`),
+  taskIrvRounds: (taskId) => fetchJson(`/api/tasks/${taskId}/irv-rounds`),
 }
