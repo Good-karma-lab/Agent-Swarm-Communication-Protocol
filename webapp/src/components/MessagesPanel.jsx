@@ -7,8 +7,8 @@ function scrub(s) {
 
 export default function MessagesPanel({ messages }) {
   const filtered = (messages || []).filter(m => {
-    if (SKIP_METHODS.has(m.method)) return false
-    if (SKIP_TOPICS.has(m.topic))   return false
+    if (SKIP_METHODS.has((m.method || '').toLowerCase())) return false
+    if (SKIP_TOPICS.has((m.topic || '').toLowerCase()))   return false
     return true
   })
 

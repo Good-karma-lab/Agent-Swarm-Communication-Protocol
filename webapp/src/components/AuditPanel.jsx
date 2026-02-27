@@ -1,3 +1,7 @@
+function scrub(s) {
+  return String(s || '').replace(/did:swarm:[A-Za-z0-9]+/g, m => '[' + m.slice(-6) + ']')
+}
+
 export default function AuditPanel({ audit }) {
   const events = audit?.events || []
   return (
@@ -8,7 +12,7 @@ export default function AuditPanel({ audit }) {
         {events.map((e, i) => (
           <div key={i} style={{ marginBottom: 2 }}>
             <span style={{ color: 'var(--text-muted)' }}>[{e.timestamp}]</span>{' '}
-            {e.message}
+            {scrub(e.message)}
           </div>
         ))}
       </div>

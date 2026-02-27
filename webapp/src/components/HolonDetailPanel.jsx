@@ -12,6 +12,7 @@ const STATUS_BADGE = {
 }
 
 export default function HolonDetailPanel({ holon, holons, onTaskClick, onHolonClick }) {
+  if (!holon) return null
   const allHolons = holons || []
   const children = allHolons.filter(h => h.parent_holon === holon.task_id)
   const badgeCls = STATUS_BADGE[holon.status] || 'badge-dim'
@@ -20,7 +21,7 @@ export default function HolonDetailPanel({ holon, holons, onTaskClick, onHolonCl
     <div>
       {/* Header meta */}
       <div className="detail-meta" style={{ marginBottom: 20 }}>
-        <span>Task: <strong style={{ fontFamily: 'var(--font-mono)' }}>{holon.task_id.slice(0, 20)}…</strong></span>
+        <span>Task: <strong style={{ fontFamily: 'var(--font-mono)' }}>{(holon.task_id || '').slice(0, 20)}…</strong></span>
         <span className={`badge ${badgeCls}`}>{holon.status}</span>
         <span className="badge badge-dim">Depth {holon.depth}</span>
       </div>
@@ -75,7 +76,7 @@ export default function HolonDetailPanel({ holon, holons, onTaskClick, onHolonCl
               }}
             >
               <span className={`badge ${STATUS_BADGE[child.status] || 'badge-dim'}`} style={{ fontSize: 10 }}>{child.status}</span>
-              <span style={{ color: 'var(--teal)' }}>{child.task_id.slice(0, 14)}…</span>
+              <span style={{ color: 'var(--teal)' }}>{(child.task_id || '').slice(0, 14)}…</span>
               <span style={{ color: 'var(--text-muted)' }}>d{child.depth}</span>
             </div>
           ))}

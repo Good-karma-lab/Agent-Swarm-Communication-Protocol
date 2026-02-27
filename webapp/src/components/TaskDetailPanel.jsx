@@ -230,7 +230,7 @@ function DeliberationTab({ taskId }) {
 }
 
 // ── Overview tab ──────────────────────────
-function OverviewTab({ taskTrace, taskVoting }) {
+function OverviewTab({ taskTrace }) {
   const dagRef = useRef(null)
   const dagNet = useRef(null)
   const [index, setIndex] = useState(0)
@@ -279,7 +279,7 @@ function OverviewTab({ taskTrace, taskVoting }) {
       }
     )
     return () => { if (dagNet.current) dagNet.current.destroy() }
-  }, [taskTrace, descendants])
+  }, [taskTrace])
 
   const replayed = timeline.slice(0, Math.max(0, Math.min(index, timeline.length)))
 
@@ -423,7 +423,7 @@ export default function TaskDetailPanel({ taskId, taskTrace, taskVoting, taskBal
       </div>
 
       {activeTab === 'overview' && (
-        <OverviewTab taskTrace={taskTrace} taskVoting={taskVoting} />
+        <OverviewTab taskTrace={taskTrace} />
       )}
       {activeTab === 'voting' && (
         <VotingTab taskVoting={taskVoting} taskBallots={taskBallots} />

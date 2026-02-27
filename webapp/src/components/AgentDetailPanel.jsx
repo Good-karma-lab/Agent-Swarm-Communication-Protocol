@@ -9,6 +9,7 @@ function healthLabel(a) {
 }
 
 export default function AgentDetailPanel({ agent, tasks, onTaskClick }) {
+  if (!agent) return null
   const health = healthLabel(agent)
   const taskList = (tasks?.tasks || []).filter(t =>
     t.assigned_to === agent.agent_id || t.assigned_to_name === agent.name
@@ -67,7 +68,7 @@ export default function AgentDetailPanel({ agent, tasks, onTaskClick }) {
                 fontSize: 11,
               }}
             >
-              <span style={{ color: 'var(--teal)' }}>{t.task_id.slice(0, 12)}…</span>
+              <span style={{ color: 'var(--teal)' }}>{(t.task_id || '').slice(0, 12)}…</span>
               {' '}
               <span style={{ color: 'var(--text-muted)' }}>{t.status}</span>
               {' '}
