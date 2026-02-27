@@ -111,7 +111,7 @@ export default function LiveGraph({ topology, holons, agents, onNodeClick }) {
     const options = {
       interaction: { hover: true, tooltipDelay: 200 },
       physics: {
-        enabled: !paused,
+        enabled: true,   // separate effect handles pause toggling
         stabilization: { enabled: true, iterations: 150 },
         barnesHut: { springLength: 140, springConstant: 0.04, damping: 0.2 },
       },
@@ -137,7 +137,14 @@ export default function LiveGraph({ topology, holons, agents, onNodeClick }) {
     })
 
     return () => { if (net.current) net.current.destroy() }
-  }, [topology, holons, agents, filter, paused])
+  }, [topology, holons, agents, filter])
+
+  // Separate effect: toggle physics without rebuilding the entire graph
+  useEffect(() => {
+    if (net.current) {
+      net.current.setOptions({ physics: { enabled: !paused } })
+    }
+  }, [paused])
 
   const fitGraph = () => { if (net.current) net.current.fit({ animation: true }) }
 
