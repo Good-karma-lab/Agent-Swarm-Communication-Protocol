@@ -164,6 +164,17 @@ pub fn derive_recovery_key(primary: &SigningKey) -> SigningKey {
     SigningKey::from_bytes(&recovery_seed)
 }
 
+/// Compute the required PoW difficulty for agent registration based on swarm size.
+/// Larger swarms require more difficult PoW to resist Sybil attacks.
+pub fn registration_pow_difficulty(swarm_size: usize) -> u32 {
+    match swarm_size {
+        0..=99     => 12,
+        100..=999  => 14,
+        1000..=9999 => 16,
+        _          => 18,
+    }
+}
+
 /// Hex-decode a string into bytes.
 pub fn hex_decode(s: &str) -> Result<Vec<u8>, ProtocolError> {
     if s.len() % 2 != 0 {

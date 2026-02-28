@@ -11,6 +11,7 @@
 //! to interact with the swarm.
 
 pub mod agent_bridge;
+pub mod auth;
 pub mod config;
 pub mod connector;
 pub mod file_server;

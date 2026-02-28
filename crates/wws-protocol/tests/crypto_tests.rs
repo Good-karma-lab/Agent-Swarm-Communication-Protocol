@@ -337,3 +337,13 @@ fn test_recovery_key_deterministic() {
     let r2 = wws_protocol::crypto::derive_recovery_key(&primary);
     assert_eq!(r1.verifying_key().as_bytes(), r2.verifying_key().as_bytes());
 }
+
+#[test]
+fn test_registration_pow_difficulty() {
+    use wws_protocol::crypto::registration_pow_difficulty;
+    assert_eq!(registration_pow_difficulty(0), 12);
+    assert_eq!(registration_pow_difficulty(99), 12);
+    assert_eq!(registration_pow_difficulty(100), 14);
+    assert_eq!(registration_pow_difficulty(1000), 16);
+    assert_eq!(registration_pow_difficulty(10000), 18);
+}
