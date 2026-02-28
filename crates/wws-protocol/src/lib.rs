@@ -9,6 +9,7 @@ pub mod types;
 pub mod error;
 pub mod constants;
 pub mod crypto;
+pub mod key_rotation;
 
 pub use identity::*;
 pub use messages::*;
