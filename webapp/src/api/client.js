@@ -1,5 +1,11 @@
 export async function fetchJson(url, options) {
   const res = await fetch(url, options)
+  const ct = res.headers.get('content-type') || ''
+  if (!ct.includes('application/json')) {
+    const err = new Error(`HTTP ${res.status}`)
+    err.status = res.status
+    throw err
+  }
   const data = await res.json()
   if (!res.ok) {
     const err = new Error(data.error || 'request_failed')

@@ -39,24 +39,28 @@ export default function App() {
 
   // ── Polling ────────────────────────────
   const refresh = useCallback(async () => {
-    const [v, m, t, ag, tp, a, au, hl] = await Promise.all([
-      api.voting(),
-      api.messages(),
-      api.tasks(),
-      api.agents(),
-      api.topology(),
-      api.audit(),
-      api.authStatus(),
-      api.holons().catch(() => []),
-    ])
-    setVoting(v)
-    setMessages(m)
-    setTasks(t)
-    setAgents(ag)
-    setTopology(tp)
-    setAudit(a)
-    setAuth(au)
-    setHolons(hl)
+    try {
+      const [v, m, t, ag, tp, a, au, hl] = await Promise.all([
+        api.voting(),
+        api.messages(),
+        api.tasks(),
+        api.agents(),
+        api.topology(),
+        api.audit(),
+        api.authStatus(),
+        api.holons().catch(() => []),
+      ])
+      setVoting(v)
+      setMessages(m)
+      setTasks(t)
+      setAgents(ag)
+      setTopology(tp)
+      setAudit(a)
+      setAuth(au)
+      setHolons(hl)
+    } catch (_) {
+      // connector offline — keep existing state, retry next poll
+    }
   }, [])
 
   usePolling(refresh, 5000)
