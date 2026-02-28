@@ -194,6 +194,9 @@ pub struct ConnectorState {
     pub irv_rounds: std::collections::HashMap<String, Vec<IrvRound>>,
     /// Board invitation acceptances per task: task_id -> Vec<BoardAcceptParams>.
     pub board_acceptances: std::collections::HashMap<String, Vec<BoardAcceptParams>>,
+    /// In-memory wws:// name registry: lowercase name -> NameRecord.
+    /// DHT-backed persistence is a future enhancement.
+    pub registered_names: std::collections::HashMap<String, wws_network::name_registry::NameRecord>,
 }
 
 impl ConnectorState {
@@ -484,6 +487,7 @@ impl WwsConnector {
             ballot_records: std::collections::HashMap::new(),
             irv_rounds: std::collections::HashMap::new(),
             board_acceptances: std::collections::HashMap::new(),
+            registered_names: std::collections::HashMap::new(),
         };
 
         Ok(Self {

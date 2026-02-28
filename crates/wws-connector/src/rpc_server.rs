@@ -13,6 +13,10 @@
 //! - `swarm.list_swarms()` - List all known swarms with their info
 //! - `swarm.create_swarm()` - Create a new private swarm
 //! - `swarm.join_swarm()` - Join an existing swarm
+//! - `swarm.register_name()` - Register a wws:// name for this agent
+//! - `swarm.resolve_name()` - Resolve a wws:// name to DID + peer_id
+//! - `swarm.renew_name()` - Renew an existing name registration (extend TTL)
+//! - `swarm.my_names()` - List all names registered by this agent
 //!
 //! The server listens on localhost TCP and speaks JSON-RPC 2.0.
 //! Each line received is a JSON-RPC request; each line sent is a response.
@@ -181,6 +185,16 @@ async fn process_request(
         "swarm.get_irv_rounds" => {
             handle_get_irv_rounds(request_id, &request.params, state).await
         }
+        "swarm.register_name" => {
+            handle_register_name(request_id, &request.params, state).await
+        }
+        "swarm.resolve_name" => {
+            handle_resolve_name(request_id, &request.params, state).await
+        }
+        "swarm.renew_name" => {
+            handle_renew_name(request_id, &request.params, state).await
+        }
+        "swarm.my_names" => handle_my_names(request_id, state).await,
         _ => SwarmResponse::error(
             request_id,
             -32601, // Method not found
@@ -2144,4 +2158,192 @@ async fn handle_get_irv_rounds(
         })).collect())
         .unwrap_or_default();
     SwarmResponse::success(request_id, serde_json::json!({ "task_id": task_id, "irv_rounds": rounds }))
+}
+
+/// Handle `swarm.register_name` — register a wws:// human-readable name for this agent.
+///
+/// Params: `{ "name": <str>, "pow_nonce": <u64> }`
+/// Returns: `{ "registered": true, "expires_at": <u64> }`
+///
+/// Name constraints: 1–64 chars, alphanumeric + hyphen only.
+/// Registration is keyed by the lowercase name and owned by the agent's DID.
+async fn handle_register_name(
+    request_id: Option<String>,
+    params: &serde_json::Value,
+    state: &Arc<RwLock<ConnectorState>>,
+) -> SwarmResponse {
+    let name = match params.get("name").and_then(|v| v.as_str()) {
+        Some(n) if !n.is_empty() => n.to_string(),
+        _ => {
+            return SwarmResponse::error(
+                request_id,
+                -32602,
+                "invalid name: must be 1-64 chars".to_string(),
+            )
+        }
+    };
+
+    if name.len() > 64 {
+        return SwarmResponse::error(
+            request_id,
+            -32602,
+            "invalid name: must be 1-64 chars".to_string(),
+        );
+    }
+
+    if !name.chars().all(|c| c.is_alphanumeric() || c == '-') {
+        return SwarmResponse::error(
+            request_id,
+            -32602,
+            "invalid name: only alphanumeric and hyphen allowed".to_string(),
+        );
+    }
+
+    let pow_nonce = params.get("pow_nonce").and_then(|v| v.as_u64()).unwrap_or(0);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let expires_at = now + wws_network::name_registry::NAME_TTL_SECS;
+
+    let mut state = state.write().await;
+    let did = state.agent_id.to_string();
+    let peer_id = state.agent_id.to_string(); // peer_id not separately stored; use agent_id
+
+    let record = wws_network::name_registry::NameRecord {
+        name: name.clone(),
+        did: did.clone(),
+        peer_id,
+        registered_at: now,
+        expires_at,
+        pow_nonce,
+        signature: vec![],
+    };
+
+    state.registered_names.insert(name.to_lowercase(), record);
+
+    SwarmResponse::success(
+        request_id,
+        serde_json::json!({
+            "registered": true,
+            "expires_at": expires_at
+        }),
+    )
+}
+
+/// Handle `swarm.resolve_name` — resolve a wws:// name to its DID and peer_id.
+///
+/// Params: `{ "name": <str> }`
+/// Returns: `{ "name": <str>, "did": <str>, "peer_id": <str>, "expires_at": <u64> }`
+async fn handle_resolve_name(
+    request_id: Option<String>,
+    params: &serde_json::Value,
+    state: &Arc<RwLock<ConnectorState>>,
+) -> SwarmResponse {
+    let name = match params.get("name").and_then(|v| v.as_str()) {
+        Some(n) if !n.is_empty() => n.to_lowercase(),
+        _ => {
+            return SwarmResponse::error(
+                request_id,
+                -32602,
+                "name parameter required".to_string(),
+            )
+        }
+    };
+
+    let state = state.read().await;
+    match state.registered_names.get(&name) {
+        Some(record) if !record.is_expired() => SwarmResponse::success(
+            request_id,
+            serde_json::json!({
+                "name": record.name,
+                "did": record.did,
+                "peer_id": record.peer_id,
+                "expires_at": record.expires_at
+            }),
+        ),
+        Some(_) => SwarmResponse::error(
+            request_id,
+            -32001,
+            "name registration expired".to_string(),
+        ),
+        None => SwarmResponse::error(request_id, -32001, "name not found".to_string()),
+    }
+}
+
+/// Handle `swarm.renew_name` — extend the TTL of an existing name registration.
+///
+/// Only the DID that originally registered the name may renew it.
+///
+/// Params: `{ "name": <str> }`
+/// Returns: `{ "renewed": true, "new_expires_at": <u64> }`
+async fn handle_renew_name(
+    request_id: Option<String>,
+    params: &serde_json::Value,
+    state: &Arc<RwLock<ConnectorState>>,
+) -> SwarmResponse {
+    let name = match params.get("name").and_then(|v| v.as_str()) {
+        Some(n) if !n.is_empty() => n.to_lowercase(),
+        _ => {
+            return SwarmResponse::error(
+                request_id,
+                -32602,
+                "name parameter required".to_string(),
+            )
+        }
+    };
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let mut state = state.write().await;
+    let caller_did = state.agent_id.to_string();
+
+    match state.registered_names.get_mut(&name) {
+        Some(record) if record.did == caller_did => {
+            record.expires_at = now + wws_network::name_registry::NAME_TTL_SECS;
+            let new_expires_at = record.expires_at;
+            SwarmResponse::success(
+                request_id,
+                serde_json::json!({
+                    "renewed": true,
+                    "new_expires_at": new_expires_at
+                }),
+            )
+        }
+        Some(_) => SwarmResponse::error(
+            request_id,
+            -32001,
+            "not owner of this name".to_string(),
+        ),
+        None => SwarmResponse::error(request_id, -32001, "name not found".to_string()),
+    }
+}
+
+/// Handle `swarm.my_names` — list all non-expired names registered by this agent.
+///
+/// Params: none
+/// Returns: `{ "names": [{ "name": <str>, "expires_at": <u64> }, ...] }`
+async fn handle_my_names(
+    request_id: Option<String>,
+    state: &Arc<RwLock<ConnectorState>>,
+) -> SwarmResponse {
+    let state = state.read().await;
+    let caller_did = state.agent_id.to_string();
+    let names: Vec<serde_json::Value> = state
+        .registered_names
+        .values()
+        .filter(|r| r.did == caller_did && !r.is_expired())
+        .map(|r| {
+            serde_json::json!({
+                "name": r.name,
+                "expires_at": r.expires_at
+            })
+        })
+        .collect();
+
+    SwarmResponse::success(request_id, serde_json::json!({ "names": names }))
 }
