@@ -34,7 +34,7 @@ export default function App() {
   const [panel, setPanel]               = useState(null) // { type, data }
   const [showSubmit, setShowSubmit]     = useState(false)
   const [description, setDescription]   = useState('')
-  const [operatorToken, setOperatorToken] = useState(localStorage.getItem('openswarm.web.token') || '')
+  const [operatorToken, setOperatorToken] = useState(localStorage.getItem('wws.web.token') || '')
   const [submitError, setSubmitError]   = useState('')
 
   // ── Polling ────────────────────────────
@@ -81,7 +81,7 @@ export default function App() {
   // ── Task submission ────────────────────
   const submitTask = async () => {
     if (!description.trim()) return
-    localStorage.setItem('openswarm.web.token', operatorToken || '')
+    localStorage.setItem('wws.web.token', operatorToken || '')
     try {
       const res = await api.submitTask(description, operatorToken)
       setSubmitError('')

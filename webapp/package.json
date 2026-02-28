@@ -1,5 +1,5 @@
 {
-  "name": "openswarm-webapp",
+  "name": "wws-console",
   "private": true,
   "version": "0.1.0",
   "type": "module",
