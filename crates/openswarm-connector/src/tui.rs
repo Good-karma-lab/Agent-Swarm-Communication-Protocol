@@ -1,4 +1,4 @@
-//! Terminal User Interface (TUI) for monitoring the ASCP Connector.
+//! Terminal User Interface (TUI) for monitoring the ASIP.Connector.
 //!
 //! Provides a live dashboard showing agent status, network statistics,
 //! active tasks, consensus state, and an event log. Built with ratatui

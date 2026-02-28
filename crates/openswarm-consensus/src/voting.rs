@@ -65,13 +65,14 @@ pub struct VotingResult {
 
 /// A single ballot in the IRV system.
 #[derive(Debug, Clone)]
-struct Ballot {
-    #[allow(dead_code)]
-    voter: AgentId,
+pub struct Ballot {
+    pub voter: AgentId,
     /// Remaining ranked choices (first = most preferred).
-    remaining_choices: Vec<String>,
+    pub remaining_choices: Vec<String>,
     /// Critic scores provided by this voter.
-    critic_scores: HashMap<String, CriticScore>,
+    pub critic_scores: HashMap<String, CriticScore>,
+    /// Original rankings before any IRV elimination (for record-keeping).
+    pub original_rankings: Vec<String>,
 }
 
 /// Coordinates Ranked Choice Voting with Instant Runoff for plan selection.
@@ -89,11 +90,13 @@ pub struct VotingEngine {
     /// Map from plan ID to proposer agent ID (for self-vote checking).
     plan_proposers: HashMap<String, AgentId>,
     /// Collected ballots.
-    ballots: Vec<Ballot>,
+    pub ballots: Vec<Ballot>,
     /// Agents selected for the senate (if sampling).
     senate: Option<HashSet<AgentId>>,
     /// Whether voting has been finalized.
     finalized: bool,
+    /// IRV round history (populated after run_irv()).
+    pub irv_rounds: Vec<openswarm_protocol::IrvRound>,
 }
 
 impl VotingEngine {
@@ -108,6 +111,7 @@ impl VotingEngine {
             ballots: Vec::new(),
             senate: None,
             finalized: false,
+            irv_rounds: Vec::new(),
         }
     }
 
@@ -218,6 +222,7 @@ impl VotingEngine {
 
         self.ballots.push(Ballot {
             voter: vote.voter.clone(),
+            original_rankings: valid_rankings.clone(),
             remaining_choices: valid_rankings,
             critic_scores: vote.critic_scores,
         });
@@ -289,8 +294,16 @@ impl VotingEngine {
                 .max_by_key(|(_, &count)| count)
             {
                 if count >= majority_threshold || tallies.len() == 1 {
-                    let winner_critic = self.aggregate_critic_scores(&winner);
+                    // Record final round (no elimination).
+                    self.irv_rounds.push(openswarm_protocol::IrvRound {
+                        task_id: self.task_id.clone(),
+                        round_number: round as u32,
+                        tallies: tallies.clone(),
+                        eliminated: None,
+                        continuing_candidates: tallies.keys().cloned().collect(),
+                    });
 
+                    let winner_critic = self.aggregate_critic_scores(&winner);
                     self.finalized = true;
 
                     return Ok(VotingResult {
@@ -316,6 +329,19 @@ impl VotingEngine {
                 "Eliminating plan with fewest first-choice votes"
             );
 
+            // Record this elimination round.
+            let continuing: Vec<String> = tallies.keys()
+                .filter(|k| k.as_str() != to_eliminate.as_str())
+                .cloned()
+                .collect();
+            self.irv_rounds.push(openswarm_protocol::IrvRound {
+                task_id: self.task_id.clone(),
+                round_number: round as u32,
+                tallies: tallies.clone(),
+                eliminated: Some(to_eliminate.clone()),
+                continuing_candidates: continuing,
+            });
+
             eliminated.insert(to_eliminate.clone());
             elimination_order.push(to_eliminate.clone());
 
@@ -326,6 +352,22 @@ impl VotingEngine {
                     .retain(|id| !eliminated.contains(id));
             }
         }
+    }
+
+    /// Get IRV round history (populated after run_irv).
+    pub fn irv_rounds(&self) -> &[openswarm_protocol::IrvRound] {
+        &self.irv_rounds
+    }
+
+    /// Get ballot data as serializable JSON values for API exposure.
+    pub fn ballots_as_json(&self) -> Vec<serde_json::Value> {
+        self.ballots.iter().map(|b| {
+            serde_json::json!({
+                "voter": b.voter.to_string(),
+                "rankings": b.original_rankings,
+                "critic_scores": b.critic_scores,
+            })
+        }).collect()
     }
 
     /// Aggregate critic scores for a plan across all ballots that scored it.
@@ -474,5 +516,199 @@ mod tests {
         // Alice can rank someone else's plan first.
         let result = engine.record_vote(make_vote("alice", "task1", 1, vec!["planB", "planA"]));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_irv_rounds_recorded_on_clear_majority() {
+        let mut engine = VotingEngine::new(
+            VotingConfig { prohibit_self_vote: false, ..Default::default() },
+            "task-rounds".into(),
+            1,
+        );
+
+        let mut proposals = HashMap::new();
+        proposals.insert("planA".to_string(), AgentId::new("alice".into()));
+        proposals.insert("planB".to_string(), AgentId::new("bob".into()));
+        engine.set_proposals(proposals);
+
+        engine.record_vote(make_vote("v1", "task-rounds", 1, vec!["planA", "planB"])).unwrap();
+        engine.record_vote(make_vote("v2", "task-rounds", 1, vec!["planA", "planB"])).unwrap();
+        engine.record_vote(make_vote("v3", "task-rounds", 1, vec!["planA", "planB"])).unwrap();
+        engine.record_vote(make_vote("v4", "task-rounds", 1, vec!["planB", "planA"])).unwrap();
+
+        let result = engine.run_irv().unwrap();
+        assert_eq!(result.winner, "planA");
+
+        // One round recorded (the final round with no elimination)
+        let rounds = engine.irv_rounds();
+        assert_eq!(rounds.len(), 1);
+        assert_eq!(rounds[0].round_number, 1);
+        assert!(rounds[0].eliminated.is_none());
+        assert_eq!(rounds[0].tallies["planA"], 3);
+        assert_eq!(rounds[0].tallies["planB"], 1);
+    }
+
+    #[test]
+    fn test_irv_rounds_recorded_with_elimination() {
+        let mut engine = VotingEngine::new(
+            VotingConfig { prohibit_self_vote: false, ..Default::default() },
+            "task-elim".into(),
+            1,
+        );
+
+        let mut proposals = HashMap::new();
+        proposals.insert("planA".to_string(), AgentId::new("alice".into()));
+        proposals.insert("planB".to_string(), AgentId::new("bob".into()));
+        proposals.insert("planC".to_string(), AgentId::new("carol".into()));
+        engine.set_proposals(proposals);
+
+        // A:2, B:2, C:1 → C eliminated → B:3, A:2 → B wins
+        engine.record_vote(make_vote("v1", "task-elim", 1, vec!["planA", "planB", "planC"])).unwrap();
+        engine.record_vote(make_vote("v2", "task-elim", 1, vec!["planA", "planC", "planB"])).unwrap();
+        engine.record_vote(make_vote("v3", "task-elim", 1, vec!["planB", "planA", "planC"])).unwrap();
+        engine.record_vote(make_vote("v4", "task-elim", 1, vec!["planB", "planC", "planA"])).unwrap();
+        engine.record_vote(make_vote("v5", "task-elim", 1, vec!["planC", "planB", "planA"])).unwrap();
+
+        let result = engine.run_irv().unwrap();
+        assert_eq!(result.winner, "planB");
+
+        // Two rounds: elimination round + final round
+        let rounds = engine.irv_rounds();
+        assert_eq!(rounds.len(), 2);
+
+        // Round 1: C eliminated
+        let round1 = &rounds[0];
+        assert_eq!(round1.round_number, 1);
+        assert_eq!(round1.eliminated, Some("planC".to_string()));
+        assert!(round1.continuing_candidates.contains(&"planA".to_string()));
+        assert!(round1.continuing_candidates.contains(&"planB".to_string()));
+        assert_eq!(round1.continuing_candidates.len(), 2);
+
+        // Round 2: final winner
+        let round2 = &rounds[1];
+        assert_eq!(round2.round_number, 2);
+        assert!(round2.eliminated.is_none());
+        assert_eq!(round2.tallies["planB"], 3);
+    }
+
+    #[test]
+    fn test_ballot_original_rankings_preserved() {
+        let mut engine = VotingEngine::new(
+            VotingConfig { prohibit_self_vote: false, ..Default::default() },
+            "task-ballot".into(),
+            1,
+        );
+
+        let mut proposals = HashMap::new();
+        proposals.insert("planA".to_string(), AgentId::new("alice".into()));
+        proposals.insert("planB".to_string(), AgentId::new("bob".into()));
+        proposals.insert("planC".to_string(), AgentId::new("carol".into()));
+        engine.set_proposals(proposals);
+
+        engine.record_vote(make_vote("v1", "task-ballot", 1, vec!["planC", "planA", "planB"])).unwrap();
+
+        // Before IRV, original_rankings should be set
+        assert_eq!(engine.ballots[0].original_rankings, vec!["planC", "planA", "planB"]);
+
+        // Run IRV (C has 1 vote, A 0, B 0 → C wins as sole voter)
+        // Actually with 1 voter, C gets all votes and wins
+        let _ = engine.run_irv().unwrap();
+
+        // After IRV, original_rankings should still be intact
+        assert_eq!(engine.ballots[0].original_rankings, vec!["planC", "planA", "planB"]);
+    }
+
+    #[test]
+    fn test_ballots_as_json() {
+        let mut engine = VotingEngine::new(
+            VotingConfig { prohibit_self_vote: false, ..Default::default() },
+            "task-json".into(),
+            1,
+        );
+
+        let mut proposals = HashMap::new();
+        proposals.insert("planA".to_string(), AgentId::new("alice".into()));
+        proposals.insert("planB".to_string(), AgentId::new("bob".into()));
+        engine.set_proposals(proposals);
+
+        let mut vote = make_vote("voter1", "task-json", 1, vec!["planA", "planB"]);
+        vote.critic_scores.insert("planA".to_string(), openswarm_protocol::CriticScore {
+            feasibility: 0.9,
+            parallelism: 0.8,
+            completeness: 0.85,
+            risk: 0.1,
+        });
+        engine.record_vote(vote).unwrap();
+
+        let json_ballots = engine.ballots_as_json();
+        assert_eq!(json_ballots.len(), 1);
+        assert_eq!(json_ballots[0]["voter"].as_str().unwrap(), "voter1");
+        assert_eq!(json_ballots[0]["rankings"][0].as_str().unwrap(), "planA");
+        // Critic scores present in output
+        assert!(json_ballots[0]["critic_scores"].is_object());
+    }
+
+    #[test]
+    fn test_aggregate_critic_scores_in_result() {
+        let mut engine = VotingEngine::new(
+            VotingConfig { prohibit_self_vote: false, ..Default::default() },
+            "task-critic".into(),
+            1,
+        );
+
+        let mut proposals = HashMap::new();
+        proposals.insert("planA".to_string(), AgentId::new("alice".into()));
+        proposals.insert("planB".to_string(), AgentId::new("bob".into()));
+        engine.set_proposals(proposals);
+
+        // Both voters prefer planA and provide critic scores
+        let mut vote1 = make_vote("v1", "task-critic", 1, vec!["planA", "planB"]);
+        vote1.critic_scores.insert("planA".to_string(), openswarm_protocol::CriticScore {
+            feasibility: 0.8,
+            parallelism: 0.7,
+            completeness: 0.9,
+            risk: 0.1,
+        });
+
+        let mut vote2 = make_vote("v2", "task-critic", 1, vec!["planA", "planB"]);
+        vote2.critic_scores.insert("planA".to_string(), openswarm_protocol::CriticScore {
+            feasibility: 0.6,
+            parallelism: 0.9,
+            completeness: 0.8,
+            risk: 0.2,
+        });
+
+        engine.record_vote(vote1).unwrap();
+        engine.record_vote(vote2).unwrap();
+
+        let result = engine.run_irv().unwrap();
+        assert_eq!(result.winner, "planA");
+
+        // Check aggregated critic score
+        let winner_score = result.winner_critic_score.unwrap();
+        assert!((winner_score.feasibility - 0.7).abs() < 1e-10); // avg of 0.8 and 0.6
+        assert!((winner_score.parallelism - 0.8).abs() < 1e-10); // avg of 0.7 and 0.9
+    }
+
+    #[test]
+    fn test_irv_rounds_task_id_matches() {
+        let mut engine = VotingEngine::new(
+            VotingConfig { prohibit_self_vote: false, ..Default::default() },
+            "specific-task-id".into(),
+            1,
+        );
+
+        let mut proposals = HashMap::new();
+        proposals.insert("planX".to_string(), AgentId::new("x".into()));
+        engine.set_proposals(proposals);
+
+        engine.record_vote(make_vote("v1", "specific-task-id", 1, vec!["planX"])).unwrap();
+        engine.run_irv().unwrap();
+
+        let rounds = engine.irv_rounds();
+        assert!(!rounds.is_empty());
+        for round in rounds {
+            assert_eq!(round.task_id, "specific-task-id");
+        }
     }
 }

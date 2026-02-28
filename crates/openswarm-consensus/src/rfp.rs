@@ -21,7 +21,7 @@ use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 
 use openswarm_protocol::{
-    AgentId, Plan, ProposalCommitParams, ProposalRevealParams, Task,
+    AgentId, CriticScore, Plan, ProposalCommitParams, ProposalRevealParams, Task,
     COMMIT_REVEAL_TIMEOUT_SECS,
 };
 
@@ -77,6 +77,8 @@ pub enum RfpPhase {
     CommitPhase,
     /// Reveal phase: collecting full plans.
     RevealPhase,
+    /// Critique phase: members score each other's proposals.
+    CritiquePhase,
     /// All plans revealed; ready for voting.
     ReadyForVoting,
     /// RFP completed (plan selected).
@@ -108,7 +110,8 @@ pub struct RevealedProposal {
 /// 2. `record_commit()` - collect plan hash commits
 /// 3. `transition_to_reveal()` - move to reveal phase
 /// 4. `record_reveal()` - collect and verify revealed plans
-/// 5. `finalize()` - get all verified proposals for voting
+/// 5. `transition_to_critique()` - move to critique phase (optional)
+/// 6. `finalize()` - get all verified proposals for voting
 pub struct RfpCoordinator {
     task_id: String,
     epoch: u64,
@@ -123,6 +126,10 @@ pub struct RfpCoordinator {
     commit_timeout_secs: u64,
     /// Expected number of proposers (Tier-1 agents).
     expected_proposers: usize,
+    /// Critique plan scores received during critique phase.
+    pub critique_scores: HashMap<AgentId, HashMap<String, CriticScore>>,
+    /// Critique content messages.
+    pub critique_content: HashMap<AgentId, String>,
 }
 
 impl RfpCoordinator {
@@ -137,6 +144,8 @@ impl RfpCoordinator {
             commit_started_at: None,
             commit_timeout_secs: COMMIT_REVEAL_TIMEOUT_SECS,
             expected_proposers,
+            critique_scores: HashMap::new(),
+            critique_content: HashMap::new(),
         }
     }
 
@@ -340,6 +349,53 @@ impl RfpCoordinator {
         Ok(())
     }
 
+    /// Transition from RevealPhase to CritiquePhase.
+    pub fn transition_to_critique(&mut self) -> Result<(), ConsensusError> {
+        if !matches!(self.phase, RfpPhase::RevealPhase | RfpPhase::ReadyForVoting) {
+            return Err(ConsensusError::RfpFailed(format!(
+                "Cannot transition to critique from {:?}",
+                self.phase
+            )));
+        }
+        self.phase = RfpPhase::CritiquePhase;
+        tracing::info!(
+            task_id = %self.task_id,
+            "Transitioning to critique phase"
+        );
+        Ok(())
+    }
+
+    /// Record a critique from a board member.
+    pub fn record_critique(
+        &mut self,
+        voter: AgentId,
+        plan_scores: HashMap<String, CriticScore>,
+        content: String,
+    ) -> Result<(), ConsensusError> {
+        self.critique_scores.insert(voter.clone(), plan_scores);
+        self.critique_content.insert(voter, content);
+        Ok(())
+    }
+
+    /// Transition from CritiquePhase to ReadyForVoting.
+    pub fn transition_to_voting(&mut self) -> Result<(), ConsensusError> {
+        if !matches!(
+            self.phase,
+            RfpPhase::CritiquePhase | RfpPhase::RevealPhase | RfpPhase::ReadyForVoting
+        ) {
+            return Err(ConsensusError::RfpFailed(format!(
+                "Cannot transition to voting from {:?}",
+                self.phase
+            )));
+        }
+        self.phase = RfpPhase::ReadyForVoting;
+        tracing::info!(
+            task_id = %self.task_id,
+            "Transitioning to ready-for-voting phase"
+        );
+        Ok(())
+    }
+
     /// Finalize the RFP and get all verified proposals for voting.
     pub fn finalize(&mut self) -> Result<Vec<RevealedProposal>, ConsensusError> {
         if self.phase != RfpPhase::ReadyForVoting && self.phase != RfpPhase::RevealPhase {
@@ -493,5 +549,216 @@ mod tests {
 
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ConsensusError::HashMismatch { .. }));
+    }
+
+    #[test]
+    fn test_critique_phase_transition() {
+        let task = Task::new("Critique test".into(), 1, 1);
+        let task_id = task.task_id.clone();
+        let mut rfp = RfpCoordinator::new(task_id.clone(), 1, 1);
+        rfp.inject_task(&task).unwrap();
+
+        let plan = make_plan(&task_id, "alice", 1);
+        let hash = RfpCoordinator::compute_plan_hash(&plan).unwrap();
+        rfp.record_commit(&ProposalCommitParams {
+            task_id: task_id.clone(),
+            proposer: AgentId::new("alice".into()),
+            epoch: 1,
+            plan_hash: hash,
+        }).unwrap();
+
+        rfp.record_reveal(&ProposalRevealParams {
+            task_id: task_id.clone(),
+            plan: plan.clone(),
+        }).unwrap();
+
+        assert_eq!(*rfp.phase(), RfpPhase::ReadyForVoting);
+
+        // Transition to critique phase.
+        rfp.transition_to_critique().unwrap();
+        assert_eq!(*rfp.phase(), RfpPhase::CritiquePhase);
+
+        // Record a critique.
+        let mut scores = HashMap::new();
+        scores.insert(plan.plan_id.clone(), CriticScore {
+            feasibility: 0.9,
+            parallelism: 0.8,
+            completeness: 0.85,
+            risk: 0.1,
+        });
+        rfp.record_critique(AgentId::new("bob".into()), scores, "Looks good".to_string()).unwrap();
+        assert_eq!(rfp.critique_scores.len(), 1);
+
+        // Transition to voting.
+        rfp.transition_to_voting().unwrap();
+        assert_eq!(*rfp.phase(), RfpPhase::ReadyForVoting);
+    }
+
+    #[test]
+    fn test_multiple_critiques_from_different_agents() {
+        let task = Task::new("Multi-critique test".into(), 1, 1);
+        let task_id = task.task_id.clone();
+        let mut rfp = RfpCoordinator::new(task_id.clone(), 1, 2); // 2 proposers expected
+
+        rfp.inject_task(&task).unwrap();
+
+        // Two proposers commit and reveal
+        let plan_alice = make_plan(&task_id, "alice", 1);
+        let plan_bob = make_plan(&task_id, "bob", 1);
+        let hash_alice = RfpCoordinator::compute_plan_hash(&plan_alice).unwrap();
+        let hash_bob = RfpCoordinator::compute_plan_hash(&plan_bob).unwrap();
+
+        rfp.record_commit(&ProposalCommitParams {
+            task_id: task_id.clone(),
+            proposer: AgentId::new("alice".into()),
+            epoch: 1,
+            plan_hash: hash_alice,
+        }).unwrap();
+        rfp.record_commit(&ProposalCommitParams {
+            task_id: task_id.clone(),
+            proposer: AgentId::new("bob".into()),
+            epoch: 1,
+            plan_hash: hash_bob,
+        }).unwrap();
+
+        // Should auto-transition to reveal after 2 commits
+        assert_eq!(*rfp.phase(), RfpPhase::RevealPhase);
+
+        rfp.record_reveal(&ProposalRevealParams { task_id: task_id.clone(), plan: plan_alice.clone() }).unwrap();
+        rfp.record_reveal(&ProposalRevealParams { task_id: task_id.clone(), plan: plan_bob.clone() }).unwrap();
+        assert_eq!(*rfp.phase(), RfpPhase::ReadyForVoting);
+
+        // Transition to critique
+        rfp.transition_to_critique().unwrap();
+        assert_eq!(*rfp.phase(), RfpPhase::CritiquePhase);
+
+        // Three different agents provide critiques
+        let agents = ["carol", "dave", "eve"];
+        for agent_name in &agents {
+            let mut scores = HashMap::new();
+            scores.insert(plan_alice.plan_id.clone(), CriticScore {
+                feasibility: 0.8,
+                parallelism: 0.7,
+                completeness: 0.9,
+                risk: 0.15,
+            });
+            scores.insert(plan_bob.plan_id.clone(), CriticScore {
+                feasibility: 0.6,
+                parallelism: 0.5,
+                completeness: 0.7,
+                risk: 0.3,
+            });
+            rfp.record_critique(
+                AgentId::new(agent_name.to_string()),
+                scores,
+                format!("Analysis from {}", agent_name),
+            ).unwrap();
+        }
+
+        assert_eq!(rfp.critique_scores.len(), 3);
+        assert_eq!(rfp.critique_content.len(), 3);
+
+        // All content present
+        let carol = AgentId::new("carol".to_string());
+        assert!(rfp.critique_content[&carol].contains("carol"));
+
+        // Transition to voting
+        rfp.transition_to_voting().unwrap();
+        assert_eq!(*rfp.phase(), RfpPhase::ReadyForVoting);
+    }
+
+    #[test]
+    fn test_critique_overwrites_existing_for_same_agent() {
+        let task = Task::new("Overwrite critique test".into(), 1, 1);
+        let task_id = task.task_id.clone();
+        let mut rfp = RfpCoordinator::new(task_id.clone(), 1, 1);
+        rfp.inject_task(&task).unwrap();
+
+        let plan = make_plan(&task_id, "alice", 1);
+        let hash = RfpCoordinator::compute_plan_hash(&plan).unwrap();
+        rfp.record_commit(&ProposalCommitParams {
+            task_id: task_id.clone(),
+            proposer: AgentId::new("alice".into()),
+            epoch: 1,
+            plan_hash: hash,
+        }).unwrap();
+        rfp.record_reveal(&ProposalRevealParams {
+            task_id: task_id.clone(),
+            plan: plan.clone(),
+        }).unwrap();
+        rfp.transition_to_critique().unwrap();
+
+        let voter = AgentId::new("bob".into());
+        let mut scores1 = HashMap::new();
+        scores1.insert(plan.plan_id.clone(), CriticScore {
+            feasibility: 0.5,
+            parallelism: 0.5,
+            completeness: 0.5,
+            risk: 0.5,
+        });
+        rfp.record_critique(voter.clone(), scores1, "First critique".to_string()).unwrap();
+        assert_eq!(rfp.critique_scores.len(), 1);
+        assert_eq!(rfp.critique_content[&voter], "First critique");
+
+        // Bob updates his critique
+        let mut scores2 = HashMap::new();
+        scores2.insert(plan.plan_id.clone(), CriticScore {
+            feasibility: 0.9,
+            parallelism: 0.9,
+            completeness: 0.9,
+            risk: 0.1,
+        });
+        rfp.record_critique(voter.clone(), scores2, "Updated critique".to_string()).unwrap();
+
+        // Still only 1 entry (overwritten)
+        assert_eq!(rfp.critique_scores.len(), 1);
+        assert_eq!(rfp.critique_content[&voter], "Updated critique");
+        assert!((rfp.critique_scores[&voter][&plan.plan_id].feasibility - 0.9).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_transition_to_critique_invalid_from_commit_phase() {
+        let task = Task::new("Invalid transition test".into(), 1, 1);
+        let task_id = task.task_id.clone();
+        let mut rfp = RfpCoordinator::new(task_id.clone(), 1, 1);
+        rfp.inject_task(&task).unwrap();
+
+        // Still in CommitPhase — cannot transition to critique
+        assert_eq!(*rfp.phase(), RfpPhase::CommitPhase);
+        let result = rfp.transition_to_critique();
+        assert!(result.is_err());
+        // Phase unchanged
+        assert_eq!(*rfp.phase(), RfpPhase::CommitPhase);
+    }
+
+    #[test]
+    fn test_rfp_critique_content_stored_per_agent() {
+        let task = Task::new("Content storage test".into(), 1, 1);
+        let task_id = task.task_id.clone();
+        let mut rfp = RfpCoordinator::new(task_id.clone(), 1, 1);
+        rfp.inject_task(&task).unwrap();
+
+        let plan = make_plan(&task_id, "alice", 1);
+        let hash = RfpCoordinator::compute_plan_hash(&plan).unwrap();
+        rfp.record_commit(&ProposalCommitParams {
+            task_id: task_id.clone(),
+            proposer: AgentId::new("alice".into()),
+            epoch: 1,
+            plan_hash: hash,
+        }).unwrap();
+        rfp.record_reveal(&ProposalRevealParams { task_id: task_id.clone(), plan: plan.clone() }).unwrap();
+        rfp.transition_to_critique().unwrap();
+
+        let long_content = "This is a very detailed critique covering feasibility, \
+            technical risk, parallelism potential, and completeness of the proposed \
+            decomposition strategy for the given task.";
+
+        rfp.record_critique(
+            AgentId::new("critic1".into()),
+            HashMap::new(),
+            long_content.to_string(),
+        ).unwrap();
+
+        assert_eq!(rfp.critique_content[&AgentId::new("critic1".into())], long_content);
     }
 }

@@ -1,8 +1,10 @@
 # OpenSwarm
 
-Decentralized AI Swarm Orchestration Protocol and Connector.
+Decentralized AI Swarm Intelligence Protocol and Connector.
 
-OpenSwarm implements the **Open Swarm Protocol (OSP)** -- an open standard for autonomous coordination of large-scale AI agent swarms. It enables thousands of heterogeneous agents to self-organize into strict hierarchical structures, perform competitive planning via Ranked Choice Voting, and execute distributed tasks without a single point of failure.
+OpenSwarm implements the **Agent Swarm Intelligence Protocol (ASIP)** -- an open standard for autonomous coordination of large-scale AI agent swarms. It enables millions of heterogeneous agents to self-organize into **dynamic holonic boards**, perform **structured two-round deliberation**, and recursively decompose hard scientific problems into executable subtasks — without a single point of failure.
+
+**Design goal**: coordinate AI agents on problems that require months of execution — cold fusion, cancer research, starship propulsion — where collective intelligence genuinely exceeds any single model.
 
 ## Architecture
 
@@ -14,7 +16,7 @@ OpenSwarm implements the **Open Swarm Protocol (OSP)** -- an open standard for a
                               │ inject tasks, view hierarchy
                               ▼
 ┌─────────────┐    JSON-RPC     ┌───────────────────────────────────┐
-│  AI Agent   │◄───────────────►│  Open Swarm Connector (Sidecar)   │
+│  AI Agent   │◄───────────────►│  ASIP.Connector (Sidecar)   │
 │  (Any LLM)  │   localhost     │                                   │
 └─────────────┘                 │  ┌────────────┐ ┌─────────────┐   │
        ▲                        │  │ Hierarchy  │ │ Consensus   │   │
@@ -31,7 +33,7 @@ OpenSwarm implements the **Open Swarm Protocol (OSP)** -- an open standard for a
                                 └───────────────────────────────────┘
 ```
 
-The **Open Swarm Connector** is a lightweight sidecar process that runs alongside each AI agent. It handles all P2P networking, consensus, and hierarchy management, exposing:
+The **ASIP.Connector** is a lightweight sidecar process that runs alongside each AI agent. It handles all P2P networking, consensus, and hierarchy management, exposing:
 
 - **JSON-RPC 2.0 API** (TCP :9370) -- for agent communication
 - **HTTP File Server** (:9371) -- serves SKILL.md and onboarding docs to agents
@@ -82,12 +84,12 @@ Key variables:
 ## Key Features
 
 - **Zero-Conf Connectivity**: Agents auto-discover peers via mDNS (local) and Kademlia DHT (global)
-- **Dynamic Pyramidal Hierarchy**: Self-organizing `k`-ary tree (default k=10) with depth `ceil(log_k(N))`
-- **Competitive Planning (RFP)**: Commit-reveal scheme prevents plan plagiarism
-- **Ranked Choice Voting (IRV)**: Democratic plan selection with self-vote prohibition
-- **Operator Console**: Interactive TUI for human operators to inject tasks and monitor hierarchy
+- **Dynamic Holonic Boards**: Teams form ad-hoc per task and dissolve on completion — no permanent hierarchy
+- **Two-Round Structured Deliberation**: Round 1 (commit-reveal proposals) → Round 2 (LLM critique with adversarial critic) → IRV vote with critic scores as tiebreaker
+- **Recursive Sub-Holon Formation**: High-complexity subtasks spawn child holons at depth+1; recursion continues until atomic executors
+- **Full Deliberation Visibility**: Every ballot, critic score, IRV round, and synthesis result persisted and queryable via API
+- **Scientific Task Representation**: Extended task fields for `task_type`, `horizon`, `capabilities_required`, `backtrack_allowed`, `knowledge_domains`, `tools_available`
 - **Agent Onboarding Server**: Built-in HTTP server serves SKILL.md for zero-friction agent setup
-- **Adaptive Granularity**: Automatic task decomposition depth based on swarm size
 - **Merkle-DAG Verification**: Cryptographic bottom-up result validation
 - **CRDT State**: Conflict-free replicated state for zero-coordination consistency
 - **Leader Succession**: Automatic failover within 30 seconds via reputation-based election
@@ -114,13 +116,13 @@ The preferred operator surface is now the web app.
 ```
 
 Web console features:
-- Expandable hierarchy tree with tier + last-seen metadata
-- Voting logs (commits/reveals/plans/ballots)
+- **HolonTreePanel**: Live recursive tree of all active holonic boards — status-color-coded (Forming/Deliberating/Voting/Executing/Synthesizing/Done), click any node to inspect its deliberation
+- **DeliberationPanel**: Full threaded deliberation timeline per task — proposals, critiques (⚔️ adversarial critic highlighted), synthesis results, critic score bars
+- **VotingPanel**: Per-voter ballot table with individual critic scores (feasibility/parallelism/completeness/risk) + IRV round-by-round elimination history
+- Task submission form with extended fields: task type, horizon, required capabilities, backtrack flag
 - Full peer-to-peer message trace stream for debugging
-- Task submission form + per-task forensic timeline
 - Interactive topology graph (zoom/pan/physics)
 - Live updates over WebSocket (`/api/stream`)
-- UI recommendations panel based on swarm capabilities
 
 Real browser E2E:
 
@@ -378,11 +380,23 @@ The connector exposes a local JSON-RPC 2.0 server (default: `127.0.0.1:9370`). E
 | `swarm.list_swarms` | List all known swarms |
 | `swarm.create_swarm` | Create a new private swarm |
 | `swarm.join_swarm` | Join an existing swarm |
+| `swarm.get_board_status` | Get the HolonState for a specific task |
+| `swarm.get_deliberation` | Get the full deliberation message thread for a task |
+| `swarm.get_ballots` | Get per-voter ballot records with critic scores |
+| `swarm.get_irv_rounds` | Get IRV round-by-round elimination history |
 
-### Example: Inject a Task
+### Example: Inject a Scientific Task
 
 ```bash
-echo '{"jsonrpc":"2.0","method":"swarm.inject_task","params":{"description":"Analyze market trends for Q1 2025"},"id":"1","signature":""}' | nc 127.0.0.1 9370
+echo '{"jsonrpc":"2.0","method":"swarm.inject_task","params":{
+  "description": "Identify novel KRAS G12C inhibitors effective in pancreatic cancer",
+  "task_type": "scientific_research",
+  "horizon": "long",
+  "capabilities_required": ["biochemistry", "drug-discovery", "oncology"],
+  "backtrack_allowed": true,
+  "knowledge_domains": ["KRAS", "PDAC", "kinase-inhibitors"],
+  "tools_available": ["pubmed_search", "ChEMBL_query"]
+},"id":"1","signature":""}' | nc 127.0.0.1 9370
 ```
 
 Response:
@@ -457,79 +471,67 @@ level = "info"
 
 1. **Bootstrap**: Agent starts the connector sidecar. It discovers peers via mDNS/DHT and joins the overlay network.
 
-2. **Hierarchy Formation**: Agents self-organize into a pyramid with branching factor k=10. Tier-1 leaders are elected via IRV voting.
+2. **Holon Formation (2 RTT)**:
+   - When a task is injected, a chair broadcasts `board.invite` to the local cluster with task digest, complexity estimate, and required capabilities
+   - Available agents respond with `board.accept` (active_tasks count + capability affinity scores) or `board.decline`
+   - Chair selects top-N by lowest load + highest affinity; announces `board.ready` with final membership (one member randomly assigned adversarial critic ⚔️)
+   - If <3 responses, chair executes solo; 1 response → peer collaboration
 
-3. **Task Execution**:
-   - A task enters through the operator console, RPC API, or a Tier-1 agent
-   - Coordinator agents propose decomposition plans (commit-reveal to prevent copying)
-   - Plans are voted on using Ranked Choice Voting (Instant Runoff)
-   - Winning plan's subtasks cascade down the hierarchy recursively
-   - Leaf executors produce results; coordinators verify and aggregate bottom-up
+3. **Two-Round Deliberation**:
+   - **Round 1 — Proposals**: Each board member independently proposes a decomposition plan via commit-reveal (SHA-256 hash first, then reveal — prevents plan copying)
+   - **Round 2 — Critique**: After all proposals revealed, each member scores all plans (feasibility/parallelism/completeness/risk) via LLM. Adversarial critic specifically searches for flaws.
+   - **Final Vote**: IRV with critic scores as tiebreaker. Individual ballots + scores persisted in `BallotRecord[]`.
 
-4. **Resilience**: If a leader goes offline, subordinates detect the timeout (30s) and trigger succession election.
+4. **Recursive Sub-Holon Formation**:
+   - For each subtask: if `estimated_complexity > 0.4`, the assigned board member becomes chair of a new sub-holon at `depth+1`
+   - Same board formation + deliberation protocol runs recursively
+   - Stops when: complexity < 0.1, LLM labels task "directly executable", or available agents < 3
 
-### Hierarchy Example (N=850, k=10)
+5. **Result Synthesis**: When all sub-results arrive, the board chair runs an LLM synthesis step that produces a structured integrated response (not mere concatenation). Synthesized result propagates up to the parent holon.
 
-```
-Tier-1:  10 Orchestrators (High Command)
-Tier-2:  100 Coordinators
-Tier-3:  740 Executors
-         ───
-Total:   850 agents, depth = ceil(log_10(850)) = 3
-```
+6. **Dissolution**: After root result delivered, `board.dissolve` broadcast; each member removes task from active holons.
+
+7. **Resilience**: If a leader goes offline, subordinates detect the timeout (30s) and trigger succession election.
 
 ## Implementation Status
 
-**Current Progress: 100% Complete!** 🎉🚀
+**Holonic Swarm Intelligence — Complete**
 
-- ✅ **Phase 1: Hierarchy Formation** - Automatic tier assignment, pyramid layout computation
-- ✅ **Phase 2: Task Distribution** - Tier-filtered task reception, RFP initialization
-- ✅ **Phase 3: Plan Generation & Voting** - Real AI plan generation (Claude agents), IRV voting, winner selection
-- ✅ **Phase 4: Subtask Assignment** - Automatic subtask distribution to subordinates after voting
-- ✅ **Phase 5: Result Aggregation** - Executor task execution, result submission, hierarchical aggregation (**NEW!**)
+### Backend (Rust)
+- ✅ `HolonState`, `DeliberationMessage`, `BallotRecord`, `IrvRound` types in `openswarm-protocol`
+- ✅ Board formation P2P messages: `board.invite/accept/decline/ready/dissolve`, `discussion.critique`
+- ✅ `CritiquePhase` state in `RfpCoordinator` (between reveal and voting)
+- ✅ IRV round history recording in `VotingEngine` (`irv_rounds: Vec<IrvRound>`)
+- ✅ Per-voter `BallotRecord` persistence with critic scores
+- ✅ `HolonState` lifecycle tracking in `ConnectorState`
+- ✅ Extended `Task` fields: `task_type`, `horizon`, `capabilities_required`, `backtrack_allowed`, `knowledge_domains`, `tools_available`
+- ✅ New RPC methods: `swarm.get_board_status`, `swarm.get_deliberation`, `swarm.get_ballots`, `swarm.get_irv_rounds`
+- ✅ New HTTP endpoints: `/api/holons`, `/api/holons/:task_id`, `/api/tasks/:id/deliberation`, `/api/tasks/:id/ballots`, `/api/tasks/:id/irv-rounds`
 
-**Recent Completion (Phase 5):**
-- Executors actually execute tasks using AI capabilities
-- Results submitted with proper Artifact structure
-- Automatic result aggregation when all subtasks complete
-- Hierarchical result propagation up the tree
-- Top-level tasks marked complete
-- **Complete end-to-end autonomous execution!** ✅
+### UI (React)
+- ✅ **HolonTreePanel** — recursive live tree with status-color nodes and click-to-inspect
+- ✅ **DeliberationPanel** — full threaded deliberation timeline with round markers, adversarial critic ⚔️ indicator, critic score bars
+- ✅ **VotingPanel** — enhanced with per-voter ballot table + IRV round-by-round animation
 
-**What Works Now:**
-```bash
-# Start 15 agents with FULL autonomous coordination
-./swarm-manager.sh start-agents 15
-
-# Inject a task - agents will:
-#   1. Form hierarchy (Tier-1 coordinators + Executors)
-#   2. Generate competing plans using Claude AI
-#   3. Vote democratically using Instant Runoff Voting
-#   4. Assign winning plan's subtasks to subordinates
-#   5. Executors perform actual work (NEW!)
-#   6. Results aggregated bottom-up (NEW!)
-#   7. Task marked complete (NEW!)
-echo '{"jsonrpc":"2.0","method":"swarm.inject_task","params":{"description":"Research quantum computing"},"id":"1"}' | nc 127.0.0.1 9370
-
-# Watch the complete autonomous workflow
-./test-phase5-result-aggregation.sh
-```
-
-**The system is now FULLY FUNCTIONAL for autonomous task execution!**
-
-**Phase 6 Bonus:**
-- ✅ Zeroclaw integration (alternative to Claude Code CLI)
-- ✅ Multiple LLM backends (Anthropic, OpenAI, local models, Ollama)
-- ✅ Local model support (no API costs!)
-- ✅ Configuration system for easy switching
+### Agent Script
+- ✅ Board invitation response via `board.invite` / `board.ready` messages
+- 🔜 Complexity-gated recursive sub-holon formation
+- 🔜 LLM synthesis step before result propagation upward
 
 ```bash
-# Use local LLM (cost-free after setup!)
-./scripts/setup-local-llm.sh all
-AGENT_IMPL=zeroclaw LLM_BACKEND=local ./swarm-manager.sh start-agents 15
-```
+# Start 9 agents with holonic swarm intelligence
+AGENT_IMPL=opencode ./swarm-manager.sh start-agents 9
 
-See [PHASE_5_COMPLETE.md](PHASE_5_COMPLETE.md) for Phase 5 details and [PHASE_6_COMPLETE.md](PHASE_6_COMPLETE.md) for Zeroclaw integration.
+# Inject a multi-level scientific task
+echo '{"jsonrpc":"2.0","method":"swarm.inject_task","params":{
+  "description": "Design a distributed consensus protocol for 10,000 AI agents — Byzantine-fault tolerant, sub-second latency, linear scaling",
+  "capabilities_required": ["distributed-systems", "consensus", "fault-tolerance"],
+  "horizon": "long"
+},"id":"1","signature":""}' | nc 127.0.0.1 9370
+
+# Watch holonic deliberation in the web console
+open http://127.0.0.1:9371/
+```
 
 ## Security
 

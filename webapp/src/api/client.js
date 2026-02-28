@@ -1,5 +1,11 @@
 export async function fetchJson(url, options) {
   const res = await fetch(url, options)
+  const ct = res.headers.get('content-type') || ''
+  if (!ct.includes('application/json')) {
+    const err = new Error(`HTTP ${res.status}`)
+    err.status = res.status
+    throw err
+  }
   const data = await res.json()
   if (!res.ok) {
     const err = new Error(data.error || 'request_failed')
@@ -32,5 +38,10 @@ export const api = {
         'x-ops-token': token || ''
       },
       body: JSON.stringify({ description })
-    })
+    }),
+  holons: () => fetchJson('/api/holons').then(d => d.holons || []),
+  holonDetail: (taskId) => fetchJson(`/api/holons/${taskId}`),
+  taskDeliberation: (taskId) => fetchJson(`/api/tasks/${taskId}/deliberation`),
+  taskBallots: (taskId) => fetchJson(`/api/tasks/${taskId}/ballots`),
+  taskIrvRounds: (taskId) => fetchJson(`/api/tasks/${taskId}/irv-rounds`),
 }

@@ -1,79 +1,84 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api/client'
 import { usePolling } from './hooks/usePolling'
-import Sidebar from './components/Sidebar'
-import OverviewPanel from './components/OverviewPanel'
-import HierarchyTree from './components/HierarchyTree'
-import VotingPanel from './components/VotingPanel'
-import MessagesPanel from './components/MessagesPanel'
-import TaskForensicsPanel from './components/TaskForensicsPanel'
-import TopologyPanel from './components/TopologyPanel'
+import Header from './components/Header'
+import LiveGraph from './components/LiveGraph'
+import BottomTray from './components/BottomTray'
+import SlidePanel from './components/SlidePanel'
+import TaskDetailPanel from './components/TaskDetailPanel'
+import AgentDetailPanel from './components/AgentDetailPanel'
+import HolonDetailPanel from './components/HolonDetailPanel'
 import AuditPanel from './components/AuditPanel'
-import IdeasPanel from './components/IdeasPanel'
+import MessagesPanel from './components/MessagesPanel'
+import SubmitTaskModal from './components/SubmitTaskModal'
 
 export default function App() {
-  const [tab, setTab] = useState('overview')
-  const [hierarchy, setHierarchy] = useState({ nodes: [] })
-  const [voting, setVoting] = useState({ voting: [], rfp: [] })
-  const [messages, setMessages] = useState([])
-  const [tasks, setTasks] = useState({ tasks: [] })
-  const [agents, setAgents] = useState({ agents: [] })
-  const [flow, setFlow] = useState({ counters: {} })
-  const [topology, setTopology] = useState({ nodes: [], edges: [] })
-  const [taskId, setTaskId] = useState('')
-  const [taskTrace, setTaskTrace] = useState({ timeline: [], descendants: [], messages: [] })
-  const [taskVoting, setTaskVoting] = useState({ voting: [], rfp: [] })
-  const [description, setDescription] = useState('')
-  const [recommendations, setRecommendations] = useState({ recommended_features: [] })
-  const [audit, setAudit] = useState({ events: [] })
-  const [auth, setAuth] = useState({ token_required: false })
-  const [operatorToken, setOperatorToken] = useState(localStorage.getItem('openswarm.web.token') || '')
-  const [submitError, setSubmitError] = useState('')
-  const [live, setLive] = useState({ active_tasks: 0, known_agents: 0, messages: [], events: [] })
+  // ── Data state ─────────────────────────
+  const [voting, setVoting]             = useState({ voting: [], rfp: [] })
+  const [messages, setMessages]         = useState([])
+  const [tasks, setTasks]               = useState({ tasks: [] })
+  const [agents, setAgents]             = useState({ agents: [] })
+  const [topology, setTopology]         = useState({ nodes: [], edges: [] })
+  const [audit, setAudit]               = useState({ events: [] })
+  const [auth, setAuth]                 = useState({ token_required: false })
+  const [holons, setHolons]             = useState([])
+  const [live, setLive]                 = useState({ active_tasks: 0, known_agents: 0, messages: [], events: [] })
 
+  // ── Task detail state ──────────────────
+  const [taskId, setTaskId]             = useState('')
+  const [taskTrace, setTaskTrace]       = useState({ timeline: [], descendants: [], messages: [] })
+  const [taskVoting, setTaskVoting]     = useState({ voting: [], rfp: [] })
+  const [taskBallots, setTaskBallots]   = useState({ ballots: [], irv_rounds: [] })
+
+  // ── UI state ───────────────────────────
+  const [panel, setPanel]               = useState(null) // { type, data }
+  const [showSubmit, setShowSubmit]     = useState(false)
+  const [description, setDescription]   = useState('')
+  const [operatorToken, setOperatorToken] = useState(localStorage.getItem('openswarm.web.token') || '')
+  const [submitError, setSubmitError]   = useState('')
+
+  // ── Polling ────────────────────────────
   const refresh = useCallback(async () => {
-    const [h, v, m, t, ag, f, tp, r, a, au] = await Promise.all([
-      api.hierarchy(),
-      api.voting(),
-      api.messages(),
-      api.tasks(),
-      api.agents(),
-      api.flow(),
-      api.topology(),
-      api.recommendations(),
-      api.audit(),
-      api.authStatus()
-    ])
-    setHierarchy(h)
-    setVoting(v)
-    setMessages(m)
-    setTasks(t)
-    setAgents(ag)
-    setFlow(f)
-    setTopology(tp)
-    setRecommendations(r)
-    setAudit(a)
-    setAuth(au)
+    try {
+      const [v, m, t, ag, tp, a, au, hl] = await Promise.all([
+        api.voting(),
+        api.messages(),
+        api.tasks(),
+        api.agents(),
+        api.topology(),
+        api.audit(),
+        api.authStatus(),
+        api.holons().catch(() => []),
+      ])
+      setVoting(v)
+      setMessages(m)
+      setTasks(t)
+      setAgents(ag)
+      setTopology(tp)
+      setAudit(a)
+      setAuth(au)
+      setHolons(hl)
+    } catch (_) {
+      // connector offline — keep existing state, retry next poll
+    }
   }, [])
 
   usePolling(refresh, 5000)
 
+  // ── WebSocket ──────────────────────────
   useEffect(() => {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     const ws = new WebSocket(`${proto}://${location.host}/api/stream`)
     ws.onmessage = (event) => {
       try {
         const payload = JSON.parse(event.data)
-        if (payload.type === 'snapshot') {
-          setLive(payload)
-        }
-      } catch (_) {
-        // ignore
-      }
+        if (payload.type === 'snapshot') setLive(payload)
+      } catch (_) {}
     }
     return () => ws.close()
   }, [])
 
+  // ── Task submission ────────────────────
   const submitTask = async () => {
     if (!description.trim()) return
     localStorage.setItem('openswarm.web.token', operatorToken || '')
@@ -81,51 +86,141 @@ export default function App() {
       const res = await api.submitTask(description, operatorToken)
       setSubmitError('')
       setDescription('')
-      if (res.task_id) setTaskId(res.task_id)
+      setShowSubmit(false)
+      if (res.task_id) loadTrace(res.task_id)
       await refresh()
     } catch (err) {
       setSubmitError(err.payload?.error || err.message)
     }
   }
 
-  const loadTrace = async (requestedTaskId) => {
+  // ── Task trace loading ─────────────────
+  const loadTrace = useCallback(async (requestedTaskId) => {
     const effectiveTaskId = (requestedTaskId || taskId || '').trim()
     if (!effectiveTaskId) return
-    if (requestedTaskId) setTaskId(effectiveTaskId)
-    const [trace, votingDetail] = await Promise.all([api.taskTimeline(effectiveTaskId), api.votingTask(effectiveTaskId)])
+    setTaskId(effectiveTaskId)
+    const [trace, votingDetail, ballots] = await Promise.all([
+      api.taskTimeline(effectiveTaskId),
+      api.votingTask(effectiveTaskId),
+      api.taskBallots(effectiveTaskId).catch(() => ({ ballots: [], irv_rounds: [] })),
+    ])
     setTaskTrace(trace)
     setTaskVoting(votingDetail)
+    setTaskBallots(ballots)
+  }, [taskId])
+
+  // ── Panel helpers ──────────────────────
+  const openTaskPanel = (task) => {
+    loadTrace(task.task_id)
+    setPanel({ type: 'task', data: { taskId: task.task_id } })
   }
 
+  const openAgentPanel = (agent) => {
+    setPanel({ type: 'agent', data: { agent } })
+  }
+
+  const openHolonPanel = (holon) => {
+    setPanel({ type: 'holon', data: { holon } })
+  }
+
+  const handleGraphNodeClick = ({ type, data }) => {
+    if (type === 'agent') openAgentPanel(data.agent)
+    if (type === 'holon') openHolonPanel(data)
+  }
+
+  const closePanel = () => setPanel(null)
+
+  // ── Render ─────────────────────────────
   return (
     <div className="app">
-      <Sidebar
+      <Header
+        agents={agents}
+        tasks={tasks}
         live={live}
-        auth={auth}
-        operatorToken={operatorToken}
-        setOperatorToken={setOperatorToken}
-        desc={description}
-        setDesc={setDescription}
-        submitTask={submitTask}
-        submitError={submitError}
-        refresh={refresh}
-        taskId={taskId}
-        setTaskId={setTaskId}
-        loadTrace={loadTrace}
-        tab={tab}
-        setTab={setTab}
+        onSubmitClick={() => setShowSubmit(true)}
+        onAuditClick={() => setPanel({ type: 'audit', data: {} })}
+        onMessagesClick={() => setPanel({ type: 'messages', data: {} })}
       />
 
-      <main className="main">
-        {tab === 'overview' ? <OverviewPanel flow={flow} live={live} voting={voting} messages={messages} tasks={tasks} agents={agents} /> : null}
-        {tab === 'hierarchy' ? <HierarchyTree nodes={hierarchy.nodes} /> : null}
-        {tab === 'voting' ? <VotingPanel voting={voting} /> : null}
-        {tab === 'messages' ? <MessagesPanel messages={messages} /> : null}
-        {tab === 'task' ? <TaskForensicsPanel taskTrace={taskTrace} tasks={tasks.tasks || []} taskId={taskId} setTaskId={setTaskId} loadTrace={loadTrace} taskVoting={taskVoting} /> : null}
-        {tab === 'topology' ? <TopologyPanel topology={topology} /> : null}
-        {tab === 'audit' ? <AuditPanel audit={audit} /> : null}
-        {tab === 'ideas' ? <IdeasPanel recommendations={recommendations} /> : null}
-      </main>
+      <LiveGraph
+        topology={topology}
+        holons={holons}
+        agents={agents}
+        onNodeClick={handleGraphNodeClick}
+      />
+
+      <BottomTray
+        agents={agents}
+        tasks={tasks}
+        onTaskClick={openTaskPanel}
+        onAgentClick={openAgentPanel}
+      />
+
+      {panel?.type === 'task' && (
+        <SlidePanel
+          title={`Task: ${(panel.data.taskId || '').slice(0, 16)}…`}
+          onClose={closePanel}
+        >
+          <TaskDetailPanel
+            taskId={panel.data.taskId}
+            taskTrace={taskTrace}
+            taskVoting={taskVoting}
+            taskBallots={taskBallots}
+          />
+        </SlidePanel>
+      )}
+
+      {panel?.type === 'agent' && (
+        <SlidePanel
+          title={`Agent: ${(panel.data.agent?.name || panel.data.agent?.agent_id || '').slice(0, 24)}`}
+          onClose={closePanel}
+        >
+          <AgentDetailPanel
+            agent={panel.data.agent}
+            tasks={tasks}
+            onTaskClick={openTaskPanel}
+          />
+        </SlidePanel>
+      )}
+
+      {panel?.type === 'holon' && (
+        <SlidePanel
+          title={`Holon: ${(panel.data.holon?.task_id || '').slice(0, 16)}…`}
+          onClose={closePanel}
+        >
+          <HolonDetailPanel
+            holon={panel.data.holon}
+            holons={holons}
+            onTaskClick={openTaskPanel}
+            onHolonClick={openHolonPanel}
+          />
+        </SlidePanel>
+      )}
+
+      {panel?.type === 'audit' && (
+        <SlidePanel title="Audit Log" onClose={closePanel}>
+          <AuditPanel audit={audit} />
+        </SlidePanel>
+      )}
+
+      {panel?.type === 'messages' && (
+        <SlidePanel title="P2P Messages" onClose={closePanel}>
+          <MessagesPanel messages={messages} />
+        </SlidePanel>
+      )}
+
+      {showSubmit && (
+        <SubmitTaskModal
+          description={description}
+          setDescription={setDescription}
+          operatorToken={operatorToken}
+          setOperatorToken={setOperatorToken}
+          auth={auth}
+          onSubmit={submitTask}
+          onClose={() => { setShowSubmit(false); setSubmitError('') }}
+          submitError={submitError}
+        />
+      )}
     </div>
   )
 }

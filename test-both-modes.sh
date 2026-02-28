@@ -3,7 +3,7 @@
 set -e
 
 echo "================================"
-echo "Testing OpenSwarm Connector Modes"
+echo "Testing ASIP.Connector Modes"
 echo "================================"
 echo ""
 

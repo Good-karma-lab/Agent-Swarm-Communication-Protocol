@@ -675,8 +675,11 @@ RPC server: tcp://127.0.0.1:$rpc_port
 
 Work autonomously. Run the infinite loop until interrupted."
 
-        # Start AI agent (Claude Code CLI, OpenCode, or Zeroclaw)
-        if [ "$AGENT_IMPL" = "zeroclaw" ]; then
+        # Start AI agent (Claude Code CLI, OpenCode, Zeroclaw, or none)
+        if [ "$AGENT_IMPL" = "none" ]; then
+            echo -e "  ${YELLOW}ℹ${NC} AGENT_IMPL=none — connector only, no agent started"
+            # agent_pid stays 0 in nodes.txt; nothing to update
+        elif [ "$AGENT_IMPL" = "zeroclaw" ]; then
             echo -e "  ${BLUE}Starting Zeroclaw agent (LLM: $LLM_BACKEND, model: $MODEL_NAME)...${NC}"
 
             # Check if zeroclaw launcher exists

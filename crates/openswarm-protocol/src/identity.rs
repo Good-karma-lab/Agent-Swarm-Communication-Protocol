@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// Unique identifier for an agent in the swarm.
 /// Format: did:swarm:<sha256_hex_of_public_key>
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct AgentId(pub String);
 
 impl AgentId {

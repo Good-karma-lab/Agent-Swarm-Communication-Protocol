@@ -317,6 +317,7 @@ fn artifact_serialization() {
         content_type: "text/plain".into(),
         size_bytes: 1024,
         created_at: chrono::Utc::now(),
+        content: "test artifact content".into(),
     };
     let json = serde_json::to_string(&artifact).unwrap();
     let parsed: Artifact = serde_json::from_str(&json).unwrap();

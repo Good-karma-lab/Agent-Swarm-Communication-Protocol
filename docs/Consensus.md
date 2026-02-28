@@ -57,19 +57,20 @@ sequenceDiagram
     Note over T1B,T1C: Recursive cascade:<br/>Same RFP cycle at Tier-2
 ```
 
-## RFP Protocol (Commit-Reveal)
+## RFP Protocol (Commit-Reveal-Critique)
 
-The `RfpCoordinator` manages the Request for Proposal process, ensuring fair plan selection by preventing plan copying through a two-phase commit-reveal scheme.
+The `RfpCoordinator` manages the Request for Proposal process, ensuring fair plan selection through a three-phase commit-reveal-critique scheme.
 
 ### RFP State Machine
 
-The coordinator transitions through five phases:
+The coordinator transitions through six phases:
 
 1. **Idle** -- Waiting for task injection
-2. **CommitPhase** -- Collecting SHA-256 plan hashes from Tier-1 agents
+2. **CommitPhase** -- Collecting SHA-256 plan hashes from board members
 3. **RevealPhase** -- Collecting and verifying full plans
-4. **ReadyForVoting** -- All plans revealed and verified; ready for IRV
-5. **Completed** -- Plan selected, RFP finished
+4. **CritiquePhase** (new) -- Board members score all plans using LLM; adversarial critic finds flaws
+5. **ReadyForVoting** -- All plans revealed and critiqued; ready for IRV with populated critic scores
+6. **Completed** -- Plan selected, RFP finished
 
 ### Phase 1: Commit
 
@@ -107,6 +108,31 @@ Reveal Phase:   Agent publishes full plan_json
 Verification:   SHA-256(plan_json) == H ?
                   Yes -> Accept plan for voting
                   No  -> Reject (HashMismatch error)
+```
+
+### Phase 3: Critique (CritiquePhase)
+
+After all plans are revealed, `transition_to_critique()` moves the RFP to `CritiquePhase`. Each board member runs an LLM critique:
+
+**Standard member prompt:**
+> "You see N decomposition plans. Score each: feasibility/parallelism/completeness/risk (0.0–1.0). Output JSON."
+
+**Adversarial critic prompt:**
+> "You are the adversarial critic. Your role is to find all flaws, risks, and weaknesses in each plan. Score each: feasibility/parallelism/completeness/risk. Be skeptical."
+
+Each member submits a `discussion.critique` message with:
+- `plan_scores: HashMap<plan_id, CriticScore>` — numerical scores per plan
+- `content: String` — full LLM critique text (not truncated)
+
+Stored as `DeliberationMessage { message_type: CritiqueFeedback, round: 2 }` for full audit trail.
+
+After all critiques received (or timeout), `transition_to_voting()` moves back to `ReadyForVoting` with `critique_scores` populated. IRV then uses these scores for tiebreaking.
+
+```rust
+// RfpCoordinator API
+rfp.transition_to_critique().unwrap();           // CommitPhase/RevealPhase → CritiquePhase
+rfp.record_critique(voter, plan_scores, text);   // Store one agent's critique
+rfp.transition_to_voting().unwrap();             // CritiquePhase → ReadyForVoting
 ```
 
 ## IRV Voting
@@ -172,8 +198,36 @@ aggregate = 0.30 * feasibility
 Critic scores are used for:
 - **Tie-breaking**: If two plans tie in IRV vote count, the plan with the higher aggregate critic score wins
 - **Quality tracking**: The winning plan's aggregate critic score is reported in the `VotingResult`
+- **Deliberation visibility**: All critic scores per voter per plan are persisted in `BallotRecord[]` and exposed via `/api/tasks/:id/ballots`
 
 Scores are aggregated across all voters who scored a plan by computing the mean of each dimension.
+
+### IRV Round History
+
+Every round of IRV is recorded as an `IrvRound` entry and stored in `ConnectorState.irv_rounds`:
+
+```json
+{
+  "task_id": "task-abc-123",
+  "round_number": 1,
+  "tallies": { "plan-A": 2, "plan-B": 2, "plan-C": 1 },
+  "eliminated": "plan-C",
+  "continuing_candidates": ["plan-A", "plan-B"]
+}
+```
+
+The final round (winner determination) also produces an `IrvRound` entry with `eliminated: null`.
+
+Full history is queryable via `GET /api/tasks/:id/irv-rounds`.
+
+### Ballot Visibility
+
+Individual ballots are persisted in `BallotRecord` with:
+- `rankings: Vec<PlanId>` — full original ranking order
+- `critic_scores: HashMap<PlanId, CriticScore>` — per-plan scores from this voter
+- `irv_round_when_eliminated: Option<u32>` — if voter's top choice was eliminated, which round
+
+Queryable via `GET /api/tasks/:id/ballots`.
 
 ## Recursive Decomposition Cascade
 

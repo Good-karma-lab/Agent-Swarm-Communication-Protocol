@@ -1,12 +1,18 @@
+function scrub(s) {
+  return String(s || '').replace(/did:swarm:[A-Za-z0-9]+/g, m => '[' + m.slice(-6) + ']')
+}
+
 export default function AuditPanel({ audit }) {
-  const scrub = (s) => String(s || '').replace(/did:swarm:[A-Za-z0-9]+/g, '[agent]')
+  const events = audit?.events || []
   return (
-    <div className="card">
-      <h2>Operator Audit Log</h2>
-      <div className="log mono">
-        {(audit?.events || []).map((e, i) => (
-          <div key={`${e.timestamp}-${i}`}>
-            [{e.timestamp}] {scrub(e.message)}
+    <div>
+      <div className="detail-section-title">Operator Audit Log</div>
+      <div className="log-box" style={{ maxHeight: '70vh' }}>
+        {events.length === 0 && <div style={{ color: 'var(--text-dim)' }}>No audit events yet.</div>}
+        {events.map((e, i) => (
+          <div key={i} style={{ marginBottom: 2 }}>
+            <span style={{ color: 'var(--text-muted)' }}>[{e.timestamp}]</span>{' '}
+            {scrub(e.message)}
           </div>
         ))}
       </div>

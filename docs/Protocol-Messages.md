@@ -1,6 +1,6 @@
 # Protocol Messages
 
-All 13 protocol methods defined by the OpenSwarm Protocol.
+All 13 protocol methods defined by the Agent Swarm Intelligence Protocol (ASIP).
 
 ---
 
@@ -68,6 +68,115 @@ The `signature` field contains a hex-encoded Ed25519 signature over the canonica
 | 11 | `task.verification` | Parent -> Child | No | Direct |
 | 12 | `swarm.keepalive` | Notification | No | `keepalive` |
 | 13 | `hierarchy.succession` | Notification | No | `hierarchy` |
+| 14 | `board.invite` | Chair -> Cluster | No | `/s/<swarm>/board/<task_id>` |
+| 15 | `board.accept` | Agent -> Chair | No | `/s/<swarm>/board/<task_id>` |
+| 16 | `board.decline` | Agent -> Chair | No | `/s/<swarm>/board/<task_id>` |
+| 17 | `board.ready` | Chair -> Members | No | `/s/<swarm>/board/<task_id>` |
+| 18 | `board.dissolve` | Chair -> Members | No | `/s/<swarm>/board/<task_id>` |
+| 19 | `discussion.critique` | Member -> Board | No | `/s/<swarm>/board/<task_id>` |
+
+---
+
+## Holonic Board Messages (14–19)
+
+### 14. board.invite
+
+Sent by the chair to the local cluster when a new task needs a board. Agents that receive this can respond with `board.accept` or `board.decline`.
+
+**Params:**
+```json
+{
+  "task_id": "task-abc-123",
+  "task_digest": "Design a distributed consensus protocol",
+  "complexity_estimate": 0.85,
+  "depth": 0,
+  "required_capabilities": ["distributed-systems", "consensus"],
+  "capacity": 5,
+  "chair": "did:swarm:chair-agent-id"
+}
+```
+
+### 15. board.accept
+
+Agent agrees to join the board. Chair collects these responses and selects the top-N by lowest `active_tasks` and highest capability affinity.
+
+**Params:**
+```json
+{
+  "task_id": "task-abc-123",
+  "agent_id": "did:swarm:member-agent-id",
+  "active_tasks": 2,
+  "capabilities": ["distributed-systems"],
+  "affinity_scores": { "consensus": 0.9, "distributed-systems": 0.7 }
+}
+```
+
+### 16. board.decline
+
+Agent cannot join the board (busy or lacks capabilities).
+
+**Params:**
+```json
+{
+  "task_id": "task-abc-123",
+  "agent_id": "did:swarm:busy-agent-id"
+}
+```
+
+### 17. board.ready
+
+Chair announces the final board composition. One member is randomly assigned the adversarial critic role.
+
+**Params:**
+```json
+{
+  "task_id": "task-abc-123",
+  "chair_id": "did:swarm:chair-id",
+  "members": [
+    "did:swarm:member-1",
+    "did:swarm:member-2",
+    "did:swarm:member-3"
+  ],
+  "adversarial_critic": "did:swarm:member-3"
+}
+```
+
+### 18. board.dissolve
+
+Sent by the chair after the root result is delivered. All board members remove the task from their active holons.
+
+**Params:**
+```json
+{ "task_id": "task-abc-123" }
+```
+
+### 19. discussion.critique
+
+Sent by each board member after all Round 1 proposals are revealed. Contains per-plan critic scores (feasibility/parallelism/completeness/risk) and the full LLM critique text. The adversarial critic's content will focus on finding flaws.
+
+**Params:**
+```json
+{
+  "task_id": "task-abc-123",
+  "voter_id": "did:swarm:member-2",
+  "round": 2,
+  "plan_scores": {
+    "plan-uuid-1": {
+      "feasibility": 0.8,
+      "parallelism": 0.9,
+      "completeness": 0.7,
+      "risk": 0.15
+    },
+    "plan-uuid-2": {
+      "feasibility": 0.6,
+      "parallelism": 0.5,
+      "completeness": 0.65,
+      "risk": 0.4
+    }
+  },
+  "content": "Plan 1 demonstrates superior parallelism by identifying 4 independent research streams. However, the biomarker identification subtask is underspecified — complexity 0.3 is too low given the KRAS variant space. Plan 2 provides better coverage but sequential dependencies reduce parallelism to near-zero."
+}
+```
 
 ---
 

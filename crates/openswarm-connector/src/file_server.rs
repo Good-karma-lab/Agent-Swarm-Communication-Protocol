@@ -85,6 +85,11 @@ impl FileServer {
             .route("/api/messages/:task_id", get(api_messages_task))
             .route("/api/tasks", get(api_tasks).post(api_submit_task))
             .route("/api/tasks/:task_id/timeline", get(api_task_timeline))
+            .route("/api/tasks/:task_id/deliberation", get(api_task_deliberation))
+            .route("/api/tasks/:task_id/ballots", get(api_task_ballots))
+            .route("/api/tasks/:task_id/irv-rounds", get(api_task_irv_rounds))
+            .route("/api/holons", get(api_holons))
+            .route("/api/holons/:task_id", get(api_holon_detail))
             .route("/api/agents", get(api_agents))
             .route("/api/topology", get(api_topology))
             .route("/api/flow", get(api_flow))
@@ -151,7 +156,7 @@ async fn messaging_md() -> impl IntoResponse {
 
 async fn onboarding() -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "name": "OpenSwarm Connector",
+        "name": "ASIP.Connector",
         "version": env!("CARGO_PKG_VERSION"),
         "protocol": "JSON-RPC 2.0",
         "rpc_default_port": 9370,
@@ -846,4 +851,108 @@ async fn stream_loop(mut socket: WebSocket, state: Arc<RwLock<ConnectorState>>) 
             break;
         }
     }
+}
+
+// ── Holonic API Handlers ────────────────────────────────────────────────────
+
+async fn api_holons(State(s): State<WebState>) -> impl IntoResponse {
+    let state = s.state.read().await;
+    let holons: Vec<serde_json::Value> = state.active_holons.values().map(|h| {
+        serde_json::json!({
+            "task_id": h.task_id,
+            "chair": h.chair.to_string(),
+            "members": h.members.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
+            "adversarial_critic": h.adversarial_critic.as_ref().map(|a| a.to_string()),
+            "depth": h.depth,
+            "parent_holon": h.parent_holon,
+            "child_holons": h.child_holons,
+            "status": format!("{:?}", h.status),
+            "created_at": h.created_at,
+            "member_count": h.members.len(),
+        })
+    }).collect();
+    Json(serde_json::json!({ "holons": holons }))
+}
+
+async fn api_holon_detail(
+    State(s): State<WebState>,
+    AxumPath(task_id): AxumPath<String>,
+) -> impl IntoResponse {
+    let state = s.state.read().await;
+    match state.active_holons.get(&task_id) {
+        Some(h) => Json(serde_json::json!({
+            "task_id": h.task_id,
+            "chair": h.chair.to_string(),
+            "members": h.members.iter().map(|m| m.to_string()).collect::<Vec<_>>(),
+            "adversarial_critic": h.adversarial_critic.as_ref().map(|a| a.to_string()),
+            "depth": h.depth,
+            "parent_holon": h.parent_holon,
+            "child_holons": h.child_holons,
+            "subtask_assignments": h.subtask_assignments.iter()
+                .map(|(k, v)| (k.clone(), v.to_string()))
+                .collect::<std::collections::HashMap<_, _>>(),
+            "status": format!("{:?}", h.status),
+            "created_at": h.created_at,
+        })).into_response(),
+        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "holon not found"}))).into_response(),
+    }
+}
+
+async fn api_task_deliberation(
+    State(s): State<WebState>,
+    AxumPath(task_id): AxumPath<String>,
+) -> impl IntoResponse {
+    let state = s.state.read().await;
+    let messages: Vec<serde_json::Value> = state.deliberation_messages
+        .get(&task_id)
+        .map(|msgs| msgs.iter().map(|m| serde_json::json!({
+            "id": m.id,
+            "task_id": m.task_id,
+            "timestamp": m.timestamp,
+            "speaker": m.speaker.to_string(),
+            "round": m.round,
+            "message_type": format!("{:?}", m.message_type),
+            "content": m.content,
+            "referenced_plan_id": m.referenced_plan_id,
+            "critic_scores": m.critic_scores,
+        })).collect())
+        .unwrap_or_default();
+    Json(serde_json::json!({ "task_id": task_id, "messages": messages }))
+}
+
+async fn api_task_ballots(
+    State(s): State<WebState>,
+    AxumPath(task_id): AxumPath<String>,
+) -> impl IntoResponse {
+    let state = s.state.read().await;
+    let ballots: Vec<serde_json::Value> = state.ballot_records
+        .get(&task_id)
+        .map(|records| records.iter().map(|b| serde_json::json!({
+            "task_id": b.task_id,
+            "voter": b.voter.to_string(),
+            "rankings": b.rankings,
+            "critic_scores": b.critic_scores,
+            "timestamp": b.timestamp,
+            "irv_round_when_eliminated": b.irv_round_when_eliminated,
+        })).collect())
+        .unwrap_or_default();
+    Json(serde_json::json!({ "task_id": task_id, "ballots": ballots }))
+}
+
+async fn api_task_irv_rounds(
+    State(s): State<WebState>,
+    AxumPath(task_id): AxumPath<String>,
+) -> impl IntoResponse {
+    let state = s.state.read().await;
+    let rounds: Vec<serde_json::Value> = state.irv_rounds
+        .get(&task_id)
+        .map(|rounds| rounds.iter().map(|r| serde_json::json!({
+            "task_id": r.task_id,
+            "round_number": r.round_number,
+            "tallies": r.tallies,
+            "eliminated": r.eliminated,
+            "continuing_candidates": r.continuing_candidates,
+        })).collect())
+        .unwrap_or_default();
+    Json(serde_json::json!({ "task_id": task_id, "irv_rounds": rounds }))
 }

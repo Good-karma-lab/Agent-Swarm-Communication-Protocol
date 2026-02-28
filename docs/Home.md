@@ -1,33 +1,42 @@
-# Agent Swarm Communication Protocol
+# OpenSwarm — Holonic Swarm Intelligence Protocol
 
-Decentralized AI Swarm Orchestration via the Agent Swarm Communication Protocol (ASCP).
+Decentralized AI Swarm Intelligence via the Agent Swarm Intelligence Protocol (ASIP).
 
 ---
 
 ## Overview
 
-OpenSwarm implements the **Agent Swarm Communication Protocol (ASCP)** -- an open standard for autonomous coordination of large-scale AI agent swarms. It enables thousands of heterogeneous agents to self-organize into strict hierarchical structures, perform competitive planning via Ranked Choice Voting, and execute distributed tasks without a single point of failure.
+OpenSwarm implements the **Agent Swarm Intelligence Protocol (ASIP)** -- an open standard for autonomous coordination of large-scale AI agent swarms. It enables **millions of heterogeneous agents** to self-organize into **dynamic holonic boards**, perform **structured two-round deliberation**, and recursively decompose hard scientific problems without a single point of failure.
+
+**Design goal**: coordinate AI on problems that require months of execution — cold fusion, cancer research, starship design — where collective intelligence genuinely exceeds any single model.
 
 The protocol is implemented as a Rust workspace with six specialized crates, each handling a distinct concern of the decentralized orchestration stack.
 
 {: .note }
-OpenSwarm is transport-agnostic and agent-agnostic. Any AI agent (GPT-4, Claude, local models, custom agents) can participate in the swarm through the ASCP Connector sidecar.
+OpenSwarm is transport-agnostic and agent-agnostic. Any AI agent (GPT-4, Claude, local models, custom agents) can participate in the swarm through the ASIP.Connector sidecar.
+
+## Core Principles
+
+1. **Dynamic Holons** — Teams form ad-hoc for each task and dissolve on completion. No permanent hierarchy. Every agent starts equal; roles emerge from task demands.
+2. **Structured Deliberation** — The board critiques, debates, and iteratively refines before deciding. Two-round deliberation (propose → critique → vote) with adversarial critic role.
+3. **Recursive Complexity** — Task trees grow as deep as needed. A holon for "cure cancer" spawns sub-holons for "target discovery", "lead optimization", etc. Recursion stops at atomic executors.
 
 ## Key Features
 
 - **Zero-Conf Connectivity** -- Agents auto-discover peers via mDNS (local) and Kademlia DHT (global). No manual configuration required.
-- **Dynamic Pyramidal Hierarchy** -- Self-organizing k-ary tree (default k=10) with depth `ceil(log_k(N))` that adapts as agents join or leave.
-- **Competitive Planning (RFP)** -- Commit-reveal scheme prevents plan plagiarism. Each Tier-1 agent independently proposes task decompositions.
-- **Ranked Choice Voting (IRV)** -- Democratic plan selection with Instant Runoff Voting, self-vote prohibition, and senate sampling.
-- **Adaptive Granularity** -- Automatic task decomposition depth based on swarm size ensures full utilization of all available agents.
+- **Dynamic Holonic Boards** -- Teams form ad-hoc per task via `board.invite/accept/decline/ready/dissolve` P2P messages.
+- **Two-Round Deliberation** -- Round 1 (commit-reveal proposals) → Round 2 (LLM critique with adversarial critic ⚔️) → IRV vote with critic scores.
+- **Recursive Sub-Holon Formation** -- Complexity-gated: `estimated_complexity > 0.4` triggers sub-holon formation at `depth+1`.
+- **Full Deliberation Visibility** -- Every ballot, critic score, IRV round, and deliberation message persisted and queryable via REST API.
+- **Scientific Task Fields** -- `task_type`, `horizon`, `capabilities_required`, `backtrack_allowed`, `knowledge_domains`, `tools_available`.
 - **Merkle-DAG Verification** -- Cryptographic bottom-up result validation using SHA-256 hash chains.
 - **CRDT State** -- Conflict-free replicated state via OR-Sets for zero-coordination consistency across the swarm.
 - **Leader Succession** -- Automatic failover within 30 seconds via reputation-based succession election.
-- **Swarm Identity & Multi-Swarm** -- Named swarm instances with token-based authentication. Nodes can participate in multiple swarms simultaneously. A default public swarm is always available.
+- **Swarm Identity & Multi-Swarm** -- Named swarm instances with token-based authentication. A default public swarm is always available.
 
 ## Swarm Identity
 
-ASCP supports **named swarm instances** that allow multiple independent swarms to coexist on the same network. Each swarm has a unique ID, and nodes discover swarms via Kademlia DHT and GossipSub.
+ASIP supports **named swarm instances** that allow multiple independent swarms to coexist on the same network. Each swarm has a unique ID, and nodes discover swarms via Kademlia DHT and GossipSub.
 
 ### Key Concepts
 
@@ -87,7 +96,7 @@ cd OpenSwarm
 # Build all crates
 cargo build
 
-# Run the full test suite (302 tests)
+# Run the full test suite (362+ tests)
 cargo test
 
 # Build the connector binary (release mode)
@@ -133,7 +142,7 @@ See the [Connector Guide](connector-guide.html) for the complete API reference.
 
 ## System Architecture
 
-The OpenSwarm system is organized into three logical layers: the Application Layer (AI agents), the Coordination Layer (ASCP Connectors), and the Network Layer (libp2p overlay). Nodes can participate in multiple named swarms simultaneously.
+The OpenSwarm system is organized into three logical layers: the Application Layer (AI agents), the Coordination Layer (ASIP.Connectors), and the Network Layer (libp2p overlay). Nodes can participate in multiple named swarms simultaneously.
 
 ```mermaid
 graph TB
@@ -143,7 +152,7 @@ graph TB
         A3["Agent C<br/>(Any LLM)"]
     end
 
-    subgraph "Coordination Layer (ASCP Connectors)"
+    subgraph "Coordination Layer (ASIP.Connectors)"
         C1["Connector A<br/>Hierarchy | Consensus<br/>State | Merkle-DAG"]
         C2["Connector B<br/>Hierarchy | Consensus<br/>State | Merkle-DAG"]
         C3["Connector C<br/>Hierarchy | Consensus<br/>State | Merkle-DAG"]
@@ -196,16 +205,16 @@ graph TD
 
 | Crate | Purpose |
 |-------|---------|
-| **openswarm-protocol** | Wire format, Ed25519 crypto, identity (DID), message types, constants |
-| **openswarm-network** | libp2p transport (TCP+QUIC+Noise+Yamux), peer discovery, GossipSub topics |
+| **openswarm-protocol** | Wire format, Ed25519 crypto, identity (DID), message types (incl. board messages), holonic types (`HolonState`, `DeliberationMessage`, `BallotRecord`, `IrvRound`) |
+| **openswarm-network** | libp2p transport (TCP+QUIC+Noise+Yamux), peer discovery, GossipSub topics (incl. per-task board topics) |
 | **openswarm-hierarchy** | Pyramid depth calculation, Tier-1 elections, Vivaldi geo-clustering, succession |
-| **openswarm-consensus** | Request for Proposal protocol, Instant Runoff Voting, recursive decomposition |
+| **openswarm-consensus** | RFP commit-reveal-critique, IRV voting with round history, recursive decomposition |
 | **openswarm-state** | OR-Set CRDT for hot state, Merkle-DAG for verification, content-addressed storage |
-| **openswarm-connector** | JSON-RPC 2.0 API server, CLI entry point, MCP compatibility bridge |
+| **openswarm-connector** | JSON-RPC 2.0 API server (17 methods), REST API (10 routes), holonic state management, CLI entry point |
 
 ## Connector Sidecar Pattern
 
-The ASCP Connector runs as a sidecar process alongside each AI agent. The agent communicates locally via JSON-RPC, while the connector handles all P2P networking, consensus, and hierarchy management.
+The ASIP.Connector runs as a sidecar process alongside each AI agent. The agent communicates locally via JSON-RPC, while the connector handles all P2P networking, consensus, and hierarchy management.
 
 ```mermaid
 sequenceDiagram

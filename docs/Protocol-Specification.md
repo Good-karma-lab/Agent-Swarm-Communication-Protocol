@@ -1,4 +1,4 @@
-# OpenSwarm Protocol Specification
+# Agent Swarm Intelligence Protocol (ASIP) Specification
 
 **Protocol Revision:** 2026-02-07
 **Version:** 0.1.0
@@ -17,7 +17,7 @@
 7. [Task Execution & Verification](#7-task-execution--verification)
 8. [State Management](#8-state-management)
 9. [Adaptive Granularity](#9-adaptive-granularity)
-10. [Agent Integration (Swarm Connector)](#10-agent-integration-swarm-connector)
+10. [Agent Integration (ASIP.Connector)](#10-agent-integration-swarm-connector)
 11. [Error Handling](#11-error-handling)
 12. [Security](#12-security)
 13. [Schema Reference](#13-schema-reference)
@@ -29,7 +29,7 @@
 
 ### 1.1 Purpose and Scope
 
-The OpenSwarm Protocol (OSP) is an open standard for decentralized orchestration of
+The Agent Swarm Intelligence Protocol (ASIP) is an open standard for decentralized orchestration of
 large-scale artificial intelligence agent swarms. It enables thousands of heterogeneous
 AI agents to self-organize into strict hierarchical structures, perform competitive
 planning, and execute distributed tasks without a single point of failure.
@@ -37,7 +37,7 @@ planning, and execute distributed tasks without a single point of failure.
 This specification defines:
 - The wire protocol (message formats, transport, framing)
 - The coordination algorithms (hierarchy formation, consensus, verification)
-- The integration interface (Swarm Connector API for agent runtimes)
+- The integration interface (ASIP.Connector API for agent runtimes)
 - The state management model (CRDT hot state, content-addressed cold storage)
 
 This specification does NOT define:
@@ -65,8 +65,8 @@ interpreted as described in [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119).
 | Term | Definition |
 |------|------------|
 | **Agent** | An autonomous AI system (e.g., an LLM-based agent) that participates in the swarm. |
-| **Swarm Connector** | A sidecar process running alongside each Agent, implementing the OSP network protocol. |
-| **Node** | A Swarm Connector instance with a unique identity in the overlay network. |
+| **ASIP.Connector** | A sidecar process running alongside each Agent, implementing the ASIP network protocol. |
+| **Node** | A ASIP.Connector instance with a unique identity in the overlay network. |
 | **Swarm** | The complete set of connected Nodes forming the overlay network. |
 | **Tier** | A level in the dynamic pyramid hierarchy. Tier-1 is the top (High Command). |
 | **Branching Factor (k)** | The number of subordinate nodes each coordinator oversees. Default: 10. |
@@ -96,9 +96,9 @@ The protocol version string is: `/openswarm/1.0.0`
 
 | Protocol | Relationship |
 |----------|-------------|
-| **JSON-RPC 2.0** | OSP messages use JSON-RPC 2.0 envelope format for all communications. |
-| **libp2p** | OSP uses libp2p for transport, peer discovery (Kademlia), and publish-subscribe (GossipSub). |
-| **MCP** | The Swarm Connector MAY expose an MCP-compatible interface, allowing agents to use the swarm as a Tool. |
+| **JSON-RPC 2.0** | ASIP messages use JSON-RPC 2.0 envelope format for all communications. |
+| **libp2p** | ASIP uses libp2p for transport, peer discovery (Kademlia), and publish-subscribe (GossipSub). |
+| **MCP** | The ASIP.Connector MAY expose an MCP-compatible interface, allowing agents to use the swarm as a Tool. |
 | **IPFS** | Content-addressed storage uses IPFS-compatible CID computation. |
 
 ---
@@ -119,7 +119,7 @@ The OpenSwarm system consists of three logical layers:
 │       │JSON-RPC      │             │                  │
 ├───────┼──────────────┼─────────────┼──────────────────┤
 │       ▼              ▼             ▼                  │
-│  Coordination Layer (Swarm Connectors)                │
+│  Coordination Layer (ASIP.Connectors)                │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐           │
 │  │Connector │  │Connector │  │Connector │  ...       │
 │  │  Node A  │◄─►  Node B  │◄─►  Node C  │           │
@@ -239,7 +239,7 @@ Inter-node communication uses libp2p with the following configuration:
 
 #### 3.2.2 Local Transport (Connector ↔ Agent)
 
-The Swarm Connector exposes a JSON-RPC 2.0 server to the local Agent over:
+The ASIP.Connector exposes a JSON-RPC 2.0 server to the local Agent over:
 - **TCP** on `127.0.0.1:<port>` (default port: `9390`)
 - **Unix Domain Socket** at `/tmp/openswarm-connector.sock` (preferred on Unix systems)
 
@@ -316,7 +316,7 @@ The same keypair serves as:
 
 ### 4.2 Bootstrap Process
 
-When a Swarm Connector starts:
+When a ASIP.Connector starts:
 
 1. **Key Generation**: If no existing keypair is found, generate a new Ed25519 keypair and persist it.
 2. **Local Discovery (mDNS)**: Broadcast an mDNS query on the local network. If peers respond, establish local connections immediately.
@@ -832,7 +832,7 @@ After the winning plan is selected:
 
 When an Executor (leaf node) receives an atomic task:
 
-1. The Swarm Connector converts the task into the agent's native format (e.g., OpenClaw prompt).
+1. The ASIP.Connector converts the task into the agent's native format (e.g., OpenClaw prompt).
 2. The agent executes the task and produces an output.
 3. The Connector packages the output as an Artifact with a Content ID (CID).
 
@@ -919,7 +919,7 @@ The Prime Orchestrator:
 
 ### 8.1 Hot State: CRDT (Conflict-free Replicated Data Types)
 
-For synchronizing real-time state across the swarm, OSP uses **Observed-Remove Sets (OR-Sets)**.
+For synchronizing real-time state across the swarm, ASIP uses **Observed-Remove Sets (OR-Sets)**.
 
 #### 8.1.1 Managed State
 
@@ -1000,11 +1000,11 @@ When a task cannot be decomposed but idle agents exist:
 
 ---
 
-## 10. Agent Integration (Swarm Connector)
+## 10. Agent Integration (ASIP.Connector)
 
 ### 10.1 Overview
 
-The Swarm Connector is a sidecar process providing agents with a simple local API.
+The ASIP.Connector is a sidecar process providing agents with a simple local API.
 The agent needs no knowledge of P2P networking, consensus, or hierarchy — it simply
 receives tasks and returns results.
 
@@ -1141,7 +1141,7 @@ Get current agent status within the swarm.
 
 ### 10.3 MCP Compatibility
 
-The Swarm Connector MAY expose an MCP Server interface, allowing agents to
+The ASIP.Connector MAY expose an MCP Server interface, allowing agents to
 use the swarm as a Tool:
 
 ```json

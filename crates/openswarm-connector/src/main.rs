@@ -1,4 +1,4 @@
-//! CLI binary entry point for the ASCP Connector sidecar.
+//! CLI binary entry point for the ASIP.Connector sidecar.
 //!
 //! Usage:
 //!   openswarm-connector [OPTIONS]
@@ -22,10 +22,10 @@ use openswarm_connector::connector::OpenSwarmConnector;
 use openswarm_connector::file_server::FileServer;
 use openswarm_connector::rpc_server::RpcServer;
 
-/// ASCP Connector - Sidecar process connecting AI agents to the swarm.
+/// ASIP.Connector - Sidecar process connecting AI agents to the swarm.
 #[derive(Parser, Debug)]
 #[command(name = "openswarm-connector")]
-#[command(about = "ASCP Connector sidecar for AI agent swarm participation")]
+#[command(about = "ASIP.Connector sidecar for AI agent swarm participation")]
 #[command(version)]
 struct Cli {
     /// Path to configuration TOML file.
@@ -169,7 +169,7 @@ async fn main() -> anyhow::Result<()> {
         swarm_public = config.swarm.is_public,
         files_server = %config.file_server.bind_addr,
         files_enabled = config.file_server.enabled,
-        "Starting ASCP Connector"
+        "Starting ASIP.Connector"
     );
 
     // Create the connector.

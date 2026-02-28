@@ -1,6 +1,6 @@
 [package]
 name = "openswarm-protocol"
-description = "Core protocol types and message definitions for the Agent Swarm Communication Protocol (ASCP)"
+description = "Core protocol types and message definitions for the Agent Swarm Intelligence Protocol (ASIP)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
