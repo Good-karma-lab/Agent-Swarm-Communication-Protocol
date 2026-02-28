@@ -6,6 +6,43 @@ OpenSwarm implements the **Agent Swarm Intelligence Protocol (ASIP)** -- an open
 
 **Design goal**: coordinate AI agents on problems that require months of execution — cold fusion, cancer research, starship propulsion — where collective intelligence genuinely exceeds any single model.
 
+## Pre-built Binaries
+
+Download the latest release from [GitHub Releases](https://github.com/Good-karma-lab/OpenSwarm/releases/latest):
+
+| Platform | Architecture | Download |
+|----------|-------------|---------|
+| Linux | x86_64 | `openswarm-connector-VERSION-linux-amd64.tar.gz` |
+| Linux | ARM64 | `openswarm-connector-VERSION-linux-arm64.tar.gz` |
+| macOS | x86_64 (Intel) | `openswarm-connector-VERSION-macos-amd64.tar.gz` |
+| macOS | ARM64 (Apple Silicon) | `openswarm-connector-VERSION-macos-arm64.tar.gz` |
+| Windows | x86_64 | `openswarm-connector-VERSION-windows-amd64.zip` |
+
+**Install on Linux / macOS:**
+
+```bash
+# Replace VERSION and PLATFORM with your values (e.g. 0.1.0 and linux-amd64)
+curl -LO https://github.com/Good-karma-lab/OpenSwarm/releases/latest/download/openswarm-connector-VERSION-PLATFORM.tar.gz
+# Verify checksum
+curl -LO https://github.com/Good-karma-lab/OpenSwarm/releases/latest/download/SHA256SUMS.txt
+sha256sum --check --ignore-missing SHA256SUMS.txt
+# Extract and run
+tar xzf openswarm-connector-VERSION-PLATFORM.tar.gz
+chmod +x openswarm-connector
+./openswarm-connector --help
+```
+
+**Install on Windows (PowerShell):**
+
+```powershell
+# Download and extract
+Invoke-WebRequest -Uri "https://github.com/Good-karma-lab/OpenSwarm/releases/latest/download/openswarm-connector-VERSION-windows-amd64.zip" -OutFile openswarm-connector.zip
+Expand-Archive openswarm-connector.zip -DestinationPath .
+.\openswarm-connector.exe --help
+```
+
+To build from source instead, see [Building](#building).
+
 ## Architecture
 
 ```
@@ -237,12 +274,14 @@ See [PHASE_6_OLLAMA_SETUP.md](PHASE_6_OLLAMA_SETUP.md) for detailed configuratio
 
 ## Prerequisites
 
+For building from source only (skip if using a [pre-built binary](#pre-built-binaries)):
+
 - **Rust 1.75+** -- install via [rustup](https://rustup.rs/):
   ```bash
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
   ```
-- **A C compiler** (gcc or clang) -- required for native dependencies (libp2p)
-- **Linux or macOS** -- on Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install)
+- **A C compiler** (gcc or clang on Linux/macOS, MSVC on Windows) -- required for native dependencies (libp2p)
+- **Supported OS**: Linux, macOS, Windows x86_64 (native); Linux ARM64 (native or via cross-compilation)
 
 ## Building
 
@@ -264,7 +303,16 @@ cargo build --release
 
 ## Binary Distribution
 
-Pre-built binaries can be created for multiple platforms:
+Pre-built binaries for all supported platforms are published automatically to [GitHub Releases](https://github.com/Good-karma-lab/OpenSwarm/releases) via CI when a version tag (`v*`) is pushed. Each release includes:
+
+- `openswarm-connector-VERSION-linux-amd64.tar.gz`
+- `openswarm-connector-VERSION-linux-arm64.tar.gz`
+- `openswarm-connector-VERSION-macos-amd64.tar.gz`
+- `openswarm-connector-VERSION-macos-arm64.tar.gz`
+- `openswarm-connector-VERSION-windows-amd64.zip`
+- `SHA256SUMS.txt`
+
+To build archives locally:
 
 ```bash
 make dist             # Archive for current platform
@@ -276,13 +324,6 @@ make cross-all        # All targets
 ```
 
 Archives are placed in `dist/` and include the binary plus documentation files.
-
-To install from an archive:
-
-```bash
-tar xzf openswarm-connector-0.1.0-linux-amd64.tar.gz
-./openswarm-connector --help
-```
 
 ## Project Structure
 

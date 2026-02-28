@@ -449,6 +449,7 @@ def run_coordinator_cycle(agent_id, task_id, task_desc, cycle_num):
                 "task_id": task_id,
                 "agent_id": agent_id,
                 "artifact": make_artifact(task_id, agent_id, synthesis_content),
+                "content": synthesis_content,
                 "merkle_proof": [],
                 "is_synthesis": True,
             })
@@ -487,7 +488,7 @@ def run_coordinator_loop(agent_id, tier):
                 task_desc = task.get("description", "")
                 log(f"Received task {task_id[-20:]}: {task_desc[:60]}")
                 break
-            if processed > 0 and attempt >= 3:
+            if processed > 0 and attempt >= 15:
                 log(f"No more tasks after {processed} cycle(s), done")
                 return
             log(f"No task yet (attempt {attempt+1}/20)...")
