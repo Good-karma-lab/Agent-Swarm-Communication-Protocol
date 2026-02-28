@@ -1,4 +1,4 @@
-//! The OpenSwarmConnector struct that ties everything together.
+//! The WwsConnector struct that ties everything together.
 //!
 //! Initializes and orchestrates all subsystems: network, hierarchy,
 //! consensus, and state management. Provides the high-level API
@@ -344,12 +344,12 @@ impl ConnectorState {
     }
 }
 
-/// The main ASIP.Connector that orchestrates all subsystems.
+/// The main WWS.Connector that orchestrates all subsystems.
 ///
 /// Created from a configuration, it initializes the network, hierarchy,
 /// consensus, and state modules, then runs the event loop that ties
 /// them together.
-pub struct OpenSwarmConnector {
+pub struct WwsConnector {
     /// Shared mutable state.
     pub state: Arc<RwLock<ConnectorState>>,
     /// Network handle for sending commands to the swarm.
@@ -362,7 +362,7 @@ pub struct OpenSwarmConnector {
     config: ConnectorConfig,
 }
 
-impl OpenSwarmConnector {
+impl WwsConnector {
     /// Create a new connector from configuration.
     ///
     /// Initializes all subsystems but does not start the event loop.
@@ -543,13 +543,13 @@ impl OpenSwarmConnector {
             state.push_log(
                 LogCategory::System,
                 format!(
-                    "ASIP.Connector started (swarm: {} [{}])",
+                    "WWS.Connector started (swarm: {} [{}])",
                     self.config.swarm.name, swarm_id_str
                 ),
             );
         }
 
-        tracing::info!("ASIP.Connector is running");
+        tracing::info!("WWS.Connector is running");
 
         // Take the event receiver out of self so we can use both in the loop.
         let mut event_rx = self
@@ -2867,7 +2867,7 @@ impl OpenSwarmConnector {
 
 }
 
-impl Clone for OpenSwarmConnector {
+impl Clone for WwsConnector {
     fn clone(&self) -> Self {
         Self {
             state: Arc::clone(&self.state),
@@ -2888,7 +2888,7 @@ mod tests {
         // Use a valid Ed25519 peer ID (base58btc encoded).
         let peer_id = PeerId::random();
         let addr = format!("/ip4/192.168.1.1/tcp/9000/p2p/{}", peer_id);
-        let result = OpenSwarmConnector::parse_bootstrap_peers(&[addr]);
+        let result = WwsConnector::parse_bootstrap_peers(&[addr]);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].0, peer_id);
     }
@@ -2896,14 +2896,14 @@ mod tests {
     #[test]
     fn parse_bootstrap_peers_missing_peer_id() {
         let addr = "/ip4/192.168.1.1/tcp/9000".to_string();
-        let result = OpenSwarmConnector::parse_bootstrap_peers(&[addr]);
+        let result = WwsConnector::parse_bootstrap_peers(&[addr]);
         assert!(result.is_empty(), "Should skip addrs without /p2p/ component");
     }
 
     #[test]
     fn parse_bootstrap_peers_invalid_multiaddr() {
         let addr = "not-a-valid-multiaddr".to_string();
-        let result = OpenSwarmConnector::parse_bootstrap_peers(&[addr]);
+        let result = WwsConnector::parse_bootstrap_peers(&[addr]);
         assert!(result.is_empty(), "Should skip unparseable addrs");
     }
 
@@ -2913,7 +2913,7 @@ mod tests {
             "".to_string(),
             "   ".to_string(),
         ];
-        let result = OpenSwarmConnector::parse_bootstrap_peers(&addrs);
+        let result = WwsConnector::parse_bootstrap_peers(&addrs);
         assert!(result.is_empty());
     }
 
@@ -2925,7 +2925,7 @@ mod tests {
             format!("/ip4/10.0.0.1/tcp/4001/p2p/{}", peer1),
             format!("/ip4/10.0.0.2/tcp/4001/p2p/{}", peer2),
         ];
-        let result = OpenSwarmConnector::parse_bootstrap_peers(&addrs);
+        let result = WwsConnector::parse_bootstrap_peers(&addrs);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].0, peer1);
         assert_eq!(result[1].0, peer2);
@@ -2939,7 +2939,7 @@ mod tests {
             "/ip4/10.0.0.2/tcp/4001".to_string(), // no peer id
             "garbage".to_string(),                  // unparseable
         ];
-        let result = OpenSwarmConnector::parse_bootstrap_peers(&addrs);
+        let result = WwsConnector::parse_bootstrap_peers(&addrs);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].0, peer1);
     }
@@ -2948,14 +2948,14 @@ mod tests {
     fn extract_peer_id_from_valid_addr() {
         let peer_id = PeerId::random();
         let addr = format!("/ip4/127.0.0.1/tcp/8080/p2p/{}", peer_id);
-        let extracted = OpenSwarmConnector::extract_peer_id_from_addr(&addr);
+        let extracted = WwsConnector::extract_peer_id_from_addr(&addr);
         assert_eq!(extracted, Some(peer_id));
     }
 
     #[test]
     fn extract_peer_id_from_addr_without_p2p() {
         let addr = "/ip4/127.0.0.1/tcp/8080";
-        let extracted = OpenSwarmConnector::extract_peer_id_from_addr(addr);
+        let extracted = WwsConnector::extract_peer_id_from_addr(addr);
         assert!(extracted.is_none());
     }
 
@@ -2963,7 +2963,7 @@ mod tests {
     #[ignore = "Requires networking support"]
     async fn connector_new_with_default_config() {
         let config = ConnectorConfig::default();
-        let connector = OpenSwarmConnector::new(config);
+        let connector = WwsConnector::new(config);
         assert!(connector.is_ok(), "Connector should initialize with default config");
     }
 
@@ -2975,7 +2975,7 @@ mod tests {
         config.network.bootstrap_peers = vec![
             format!("/ip4/10.0.0.1/tcp/9000/p2p/{}", peer_id),
         ];
-        let connector = OpenSwarmConnector::new(config);
+        let connector = WwsConnector::new(config);
         assert!(connector.is_ok(), "Connector should initialize with bootstrap peers");
     }
 
@@ -2983,7 +2983,7 @@ mod tests {
     #[ignore = "Requires networking support"]
     async fn connector_run_connects_to_swarm_on_start() {
         let config = ConnectorConfig::default();
-        let connector = OpenSwarmConnector::new(config).unwrap();
+        let connector = WwsConnector::new(config).unwrap();
         let state = connector.shared_state();
 
         // Run the connector with a timeout; it will reach Running status
@@ -3011,7 +3011,7 @@ mod tests {
             "Connector should be Running after start"
         );
         assert!(
-            s.event_log.iter().any(|e| e.message.contains("ASIP.Connector started")),
+            s.event_log.iter().any(|e| e.message.contains("WWS.Connector started")),
             "Should have startup log entry"
         );
     }

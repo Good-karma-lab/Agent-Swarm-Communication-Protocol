@@ -11,7 +11,7 @@
 //! 3. Tier-2 coordinators run RFP for their subtask, decomposing further
 //! 4. This continues until tasks reach executor-level agents
 //!
-//! The Adaptive Granularity Algorithm (in openswarm-state) determines
+//! The Adaptive Granularity Algorithm (in wws-state) determines
 //! whether a task should be further decomposed or executed atomically.
 
 use std::collections::HashMap;

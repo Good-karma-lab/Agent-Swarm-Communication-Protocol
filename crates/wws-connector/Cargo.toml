@@ -24,6 +24,7 @@ tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 toml = { workspace = true }
+dirs = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 clap = { version = "4", features = ["derive"] }

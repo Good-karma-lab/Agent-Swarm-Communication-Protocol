@@ -1,7 +1,7 @@
 //! GossipSub topic management for all protocol topics.
 //!
 //! Manages subscription and lifecycle of GossipSub topics corresponding
-//! to the OpenSwarm protocol channels: elections, proposals, voting,
+//! to the WWS protocol channels: elections, proposals, voting,
 //! tasks, results, keepalive, and hierarchy.
 
 use std::collections::HashMap;
@@ -10,7 +10,7 @@ use libp2p::gossipsub::{self, IdentTopic, TopicHash};
 
 use crate::NetworkError;
 
-/// Manages GossipSub topic subscriptions for an OpenSwarm node.
+/// Manages GossipSub topic subscriptions for a WWS node.
 ///
 /// Topics are organized by protocol function. Each topic is tracked
 /// by its hash for efficient lookup during message routing.

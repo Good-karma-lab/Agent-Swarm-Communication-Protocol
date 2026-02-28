@@ -1,6 +1,6 @@
 //! Custom NetworkBehaviour composing Kademlia + GossipSub + mDNS + Identify + Ping + AutoNAT.
 //!
-//! This module defines the composite behaviour for the OpenSwarm network node.
+//! This module defines the composite behaviour for the WWS network node.
 //! Each sub-behaviour handles a specific aspect of peer-to-peer communication:
 //! - **Kademlia**: Distributed hash table for peer routing and record storage
 //! - **GossipSub**: Pub/sub messaging for protocol messages
@@ -20,7 +20,7 @@ use libp2p::{
 
 use crate::NetworkError;
 
-/// Composite NetworkBehaviour for an OpenSwarm node.
+/// Composite NetworkBehaviour for a WWS node.
 ///
 /// The libp2p derive macro auto-generates a `SwarmBehaviourEvent` enum
 /// with one variant per field, used for routing events in the swarm host.
@@ -61,7 +61,7 @@ impl Default for BehaviourConfig {
     fn default() -> Self {
         Self {
             protocol_version: wws_protocol::PROTOCOL_VERSION.to_string(),
-            kad_protocol: "/openswarm/kad/1.0.0".to_string(),
+            kad_protocol: "/wws/kad/1.0.0".to_string(),
             gossipsub_heartbeat: Duration::from_secs(1),
             gossipsub_strict: true,
             mdns_query_interval: Duration::from_secs(5),

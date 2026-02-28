@@ -22,13 +22,13 @@ pub const VOTING_TIMEOUT_SECS: u64 = 120;
 pub const MAX_HIERARCHY_DEPTH: u32 = 10;
 
 /// GossipSub topic prefix.
-pub const TOPIC_PREFIX: &str = "/openswarm/1.0.0";
+pub const TOPIC_PREFIX: &str = "/wws/1.0.0";
 
 /// JSON-RPC protocol version.
 pub const JSONRPC_VERSION: &str = "2.0";
 
 /// Protocol version string.
-pub const PROTOCOL_VERSION: &str = "/openswarm/1.0.0";
+pub const PROTOCOL_VERSION: &str = "/wws/1.0.0";
 
 /// Proof of Work difficulty (number of leading zero bits required).
 pub const POW_DIFFICULTY: u32 = 16;
@@ -37,13 +37,13 @@ pub const POW_DIFFICULTY: u32 = 16;
 pub const DEFAULT_SWARM_ID: &str = "public";
 
 /// Default swarm display name.
-pub const DEFAULT_SWARM_NAME: &str = "ASIP Public";
+pub const DEFAULT_SWARM_NAME: &str = "WWS Public";
 
 /// DHT key prefix for swarm registry records.
-pub const SWARM_REGISTRY_PREFIX: &str = "/openswarm/registry/";
+pub const SWARM_REGISTRY_PREFIX: &str = "/wws/registry/";
 
 /// DHT key prefix for swarm membership records.
-pub const SWARM_MEMBERSHIP_PREFIX: &str = "/openswarm/membership/";
+pub const SWARM_MEMBERSHIP_PREFIX: &str = "/wws/membership/";
 
 /// Swarm announcement interval in seconds.
 pub const SWARM_ANNOUNCE_INTERVAL_SECS: u64 = 30;

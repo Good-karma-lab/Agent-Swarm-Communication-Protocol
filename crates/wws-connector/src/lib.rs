@@ -1,7 +1,7 @@
-//! ASIP.Connector - JSON-RPC API server and sidecar for AI agents
+//! WWS.Connector - JSON-RPC API server and sidecar for AI agents
 //!
-//! The connector is the interface between an AI agent (e.g., OpenClaw) and
-//! the OpenSwarm network. It initializes and orchestrates all subsystems:
+//! The connector is the interface between an AI agent and
+//! the WWS network. It initializes and orchestrates all subsystems:
 //! - Network layer (libp2p swarm)
 //! - Hierarchy management (pyramid, elections, geo-clustering)
 //! - Consensus (RFP, voting, cascade)
@@ -19,6 +19,6 @@ pub mod rpc_server;
 pub mod tui;
 
 pub use config::ConnectorConfig;
-pub use connector::OpenSwarmConnector;
+pub use connector::WwsConnector;
 pub use file_server::FileServer;
 pub use rpc_server::RpcServer;

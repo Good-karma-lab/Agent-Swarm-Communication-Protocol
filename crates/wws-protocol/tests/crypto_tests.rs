@@ -1,4 +1,4 @@
-//! Comprehensive tests for the cryptographic primitives of the OpenSwarm protocol.
+//! Comprehensive tests for the cryptographic primitives of the WWS protocol.
 //!
 //! These tests verify:
 //! - Ed25519 keypair generation and agent ID derivation

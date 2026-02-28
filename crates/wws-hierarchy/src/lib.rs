@@ -1,4 +1,4 @@
-//! OpenSwarm Hierarchy - Dynamic Pyramid Allocation and role management
+//! WWS Hierarchy - Dynamic Pyramid Allocation and role management
 //!
 //! Implements the hierarchical organization of agents in the swarm:
 //! - Dynamic pyramid allocation based on swarm size N and branching factor k

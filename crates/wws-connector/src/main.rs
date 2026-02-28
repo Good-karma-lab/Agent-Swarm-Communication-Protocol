@@ -1,7 +1,7 @@
-//! CLI binary entry point for the ASIP.Connector sidecar.
+//! CLI binary entry point for the WWS.Connector sidecar.
 //!
 //! Usage:
-//!   openswarm-connector [OPTIONS]
+//!   wws-connector [OPTIONS]
 //!
 //! Options:
 //!   -c, --config <FILE>    Path to configuration TOML file
@@ -18,14 +18,14 @@ use std::path::PathBuf;
 use clap::Parser;
 
 use wws_connector::config::ConnectorConfig;
-use wws_connector::connector::OpenSwarmConnector;
+use wws_connector::connector::WwsConnector;
 use wws_connector::file_server::FileServer;
 use wws_connector::rpc_server::RpcServer;
 
-/// ASIP.Connector - Sidecar process connecting AI agents to the swarm.
+/// WWS.Connector - Sidecar process connecting AI agents to the swarm.
 #[derive(Parser, Debug)]
-#[command(name = "openswarm-connector")]
-#[command(about = "ASIP.Connector sidecar for AI agent swarm participation")]
+#[command(name = "wws-connector")]
+#[command(about = "WWS.Connector sidecar for AI agent swarm participation")]
 #[command(version)]
 struct Cli {
     /// Path to configuration TOML file.
@@ -135,7 +135,7 @@ async fn main() -> anyhow::Result<()> {
 
     if cli.tui || cli.console {
         // In TUI/console mode, write logs to a file instead of stdout/stderr.
-        let log_dir = std::env::temp_dir().join("openswarm-logs");
+        let log_dir = std::env::temp_dir().join("wws-logs");
         std::fs::create_dir_all(&log_dir)?;
         let log_file = log_dir.join(format!("{}.log", config.agent.name));
         let file = std::fs::OpenOptions::new()
@@ -169,11 +169,11 @@ async fn main() -> anyhow::Result<()> {
         swarm_public = config.swarm.is_public,
         files_server = %config.file_server.bind_addr,
         files_enabled = config.file_server.enabled,
-        "Starting ASIP.Connector"
+        "Starting WWS.Connector"
     );
 
     // Create the connector.
-    let connector = OpenSwarmConnector::new(config.clone())?;
+    let connector = WwsConnector::new(config.clone())?;
 
     // Get handles for the RPC server.
     let state = connector.shared_state();

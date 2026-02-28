@@ -1,10 +1,10 @@
 //! Configuration loading from TOML and environment variables.
 //!
 //! The connector reads its configuration from:
-//! 1. A TOML config file (default: config/openswarm.toml)
+//! 1. A TOML config file (default: config/wws.toml)
 //! 2. Environment variables (override TOML values)
 //!
-//! Environment variable prefix: OPENSWARM_
+//! Environment variable prefix: WWS_
 
 use std::net::SocketAddr;
 use std::path::Path;
@@ -113,7 +113,7 @@ pub struct AgentConfig {
 /// Logging configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {
-    /// Log level filter (e.g., "info", "debug", "openswarm=debug,libp2p=info").
+    /// Log level filter (e.g., "info", "debug", "wws=debug,libp2p=info").
     #[serde(default = "default_log_level")]
     pub level: String,
     /// Whether to output JSON-formatted logs.
@@ -174,7 +174,12 @@ fn default_rpc_timeout() -> u64 {
     30
 }
 fn default_agent_name() -> String {
-    "openswarm-agent".to_string()
+    "wws-agent".to_string()
+}
+pub fn default_identity_dir() -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".wws")
 }
 fn default_log_level() -> String {
     "info".to_string()
@@ -290,8 +295,8 @@ impl ConnectorConfig {
 
     /// Load configuration from a TOML file, with environment variable overrides.
     ///
-    /// Environment variables use the prefix `OPENSWARM_` and path separators `__`.
-    /// For example: `OPENSWARM_RPC__BIND_ADDR=127.0.0.1:9999`
+    /// Environment variables use the prefix `WWS_` and path separators `__`.
+    /// For example: `WWS_RPC__BIND_ADDR=127.0.0.1:9999`
     pub fn load(path: Option<&Path>) -> Result<Self, anyhow::Error> {
         let mut config = if let Some(path) = path {
             if path.exists() {
@@ -315,47 +320,47 @@ impl ConnectorConfig {
 
     /// Apply environment variable overrides to the configuration.
     fn apply_env_overrides(&mut self) {
-        if let Ok(val) = std::env::var("OPENSWARM_LISTEN_ADDR") {
+        if let Ok(val) = std::env::var("WWS_LISTEN_ADDR") {
             self.network.listen_addr = val;
         }
-        if let Ok(val) = std::env::var("OPENSWARM_RPC_BIND_ADDR") {
+        if let Ok(val) = std::env::var("WWS_RPC_BIND_ADDR") {
             self.rpc.bind_addr = val;
         }
-        if let Ok(val) = std::env::var("OPENSWARM_LOG_LEVEL") {
+        if let Ok(val) = std::env::var("WWS_LOG_LEVEL") {
             self.logging.level = val;
         }
-        if let Ok(val) = std::env::var("OPENSWARM_BRANCHING_FACTOR") {
+        if let Ok(val) = std::env::var("WWS_BRANCHING_FACTOR") {
             if let Ok(k) = val.parse() {
                 self.hierarchy.branching_factor = k;
             }
         }
-        if let Ok(val) = std::env::var("OPENSWARM_EPOCH_DURATION") {
+        if let Ok(val) = std::env::var("WWS_EPOCH_DURATION") {
             if let Ok(d) = val.parse() {
                 self.hierarchy.epoch_duration_secs = d;
             }
         }
-        if let Ok(val) = std::env::var("OPENSWARM_AGENT_NAME") {
+        if let Ok(val) = std::env::var("WWS_AGENT_NAME") {
             self.agent.name = val;
         }
-        if let Ok(val) = std::env::var("OPENSWARM_BOOTSTRAP_PEERS") {
+        if let Ok(val) = std::env::var("WWS_BOOTSTRAP_PEERS") {
             self.network.bootstrap_peers = val.split(',').map(|s| s.trim().to_string()).collect();
         }
-        if let Ok(val) = std::env::var("OPENSWARM_SWARM_ID") {
+        if let Ok(val) = std::env::var("WWS_SWARM_ID") {
             self.swarm.swarm_id = val;
         }
-        if let Ok(val) = std::env::var("OPENSWARM_SWARM_TOKEN") {
+        if let Ok(val) = std::env::var("WWS_SWARM_TOKEN") {
             self.swarm.token = Some(val);
         }
-        if let Ok(val) = std::env::var("OPENSWARM_SWARM_NAME") {
+        if let Ok(val) = std::env::var("WWS_SWARM_NAME") {
             self.swarm.name = val;
         }
-        if let Ok(val) = std::env::var("OPENSWARM_SWARM_PUBLIC") {
+        if let Ok(val) = std::env::var("WWS_SWARM_PUBLIC") {
             self.swarm.is_public = val == "true" || val == "1";
         }
-        if let Ok(val) = std::env::var("OPENSWARM_FILE_SERVER_ADDR") {
+        if let Ok(val) = std::env::var("WWS_FILE_SERVER_ADDR") {
             self.file_server.bind_addr = val;
         }
-        if let Ok(val) = std::env::var("OPENSWARM_FILE_SERVER_ENABLED") {
+        if let Ok(val) = std::env::var("WWS_FILE_SERVER_ENABLED") {
             self.file_server.enabled = val == "true" || val == "1";
         }
     }

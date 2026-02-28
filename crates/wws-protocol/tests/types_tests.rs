@@ -441,6 +441,6 @@ fn pow_difficulty_is_16() {
 #[test]
 fn protocol_version_format() {
     let v = wws_protocol::constants::PROTOCOL_VERSION;
-    assert!(v.starts_with("/openswarm/"));
-    assert!(v.contains("openswarm"));
+    assert!(v.starts_with("/wws/"));
+    assert!(v.contains("wws"));
 }

@@ -1,4 +1,4 @@
-//! OpenSwarm State - CRDT state management and Merkle-DAG verification
+//! WWS State - CRDT state management and Merkle-DAG verification
 //!
 //! Provides the distributed state management infrastructure:
 //! - OR-Set CRDT for conflict-free hot state (task statuses, agent lists)

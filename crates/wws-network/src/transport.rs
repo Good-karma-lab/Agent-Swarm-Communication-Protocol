@@ -32,7 +32,7 @@ impl Default for TransportConfig {
 }
 
 /// Build a fully configured libp2p Swarm with TCP + Noise + Yamux transport
-/// and the composite OpenSwarm behaviour.
+/// and the composite WWS behaviour.
 ///
 /// The swarm is created with a fresh identity. Returns the swarm ready
 /// for listening and dialing.

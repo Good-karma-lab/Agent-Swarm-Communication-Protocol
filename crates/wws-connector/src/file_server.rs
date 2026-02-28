@@ -111,7 +111,7 @@ impl FileServer {
 }
 
 fn detect_web_root() -> PathBuf {
-    if let Ok(path) = std::env::var("OPENSWARM_WEBAPP_DIR") {
+    if let Ok(path) = std::env::var("WWS_WEBAPP_DIR") {
         let p = PathBuf::from(path);
         if p.join("index.html").exists() {
             return p;
@@ -156,7 +156,7 @@ async fn messaging_md() -> impl IntoResponse {
 
 async fn onboarding() -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "name": "ASIP.Connector",
+        "name": "WWS.Connector",
         "version": env!("CARGO_PKG_VERSION"),
         "protocol": "JSON-RPC 2.0",
         "rpc_default_port": 9370,
@@ -184,11 +184,11 @@ async fn onboarding() -> Json<serde_json::Value> {
 }
 
 async fn api_health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({"ok": true, "service": "openswarm-web"}))
+    Json(serde_json::json!({"ok": true, "service": "wws-web"}))
 }
 
 async fn api_auth_status() -> Json<serde_json::Value> {
-    let token_required = std::env::var("OPENSWARM_WEB_TOKEN")
+    let token_required = std::env::var("WWS_WEB_TOKEN")
         .ok()
         .map(|v| !v.trim().is_empty())
         .unwrap_or(false);
@@ -471,7 +471,7 @@ async fn api_submit_task(
     headers: HeaderMap,
     Json(req): Json<TaskSubmitRequest>,
 ) -> impl IntoResponse {
-    if let Ok(required) = std::env::var("OPENSWARM_WEB_TOKEN") {
+    if let Ok(required) = std::env::var("WWS_WEB_TOKEN") {
         if !required.trim().is_empty() {
             let provided = headers
                 .get("x-ops-token")

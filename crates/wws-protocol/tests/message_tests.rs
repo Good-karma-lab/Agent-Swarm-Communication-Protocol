@@ -205,7 +205,7 @@ fn protocol_method_from_str_unknown_returns_none() {
 
 #[test]
 fn topics_have_correct_prefix() {
-    let prefix = "/openswarm/1.0.0";
+    let prefix = "/wws/1.0.0";
     assert!(SwarmTopics::election_tier1().starts_with(prefix));
     assert!(SwarmTopics::keepalive().starts_with(prefix));
     assert!(SwarmTopics::hierarchy().starts_with(prefix));

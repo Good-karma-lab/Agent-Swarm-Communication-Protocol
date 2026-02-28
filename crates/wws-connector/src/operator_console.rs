@@ -1,10 +1,10 @@
-//! Human-Operator Console for the ASIP.Connector.
+//! Human-Operator Console for the WWS.Connector.
 //!
 //! An interactive TUI that allows a human operator (or script piping stdin)
 //! to inject tasks into the swarm, view the agent hierarchy tree, monitor
 //! active tasks, and observe the event log.
 //!
-//! Launch with `openswarm-connector --console`.
+//! Launch with `wws-connector --console`.
 
 use std::io::{self, Stdout};
 use std::sync::Arc;
@@ -113,7 +113,7 @@ impl OperatorConsole {
         let mut console_messages = Vec::new();
         console_messages.push((
             chrono::Utc::now(),
-            "OpenSwarm Operator Console ready. Type a task description and press Enter to inject it.".to_string(),
+            "WWS Operator Console ready. Type a task description and press Enter to inject it.".to_string(),
             Color::Cyan,
         ));
         console_messages.push((
@@ -573,7 +573,7 @@ impl OperatorConsole {
     /// Render the top status bar.
     fn render_status_bar(&self, frame: &mut Frame, area: Rect, snap: &ConsoleSnapshot) {
         let block = Block::default()
-            .title(" OpenSwarm Operator Console ")
+            .title(" WWS Operator Console ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan));
 

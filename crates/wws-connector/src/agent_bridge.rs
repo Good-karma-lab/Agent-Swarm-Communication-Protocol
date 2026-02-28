@@ -112,7 +112,7 @@ pub enum AgentBridgeError {
     McpError(String),
 }
 
-/// Bridge between the OpenSwarm connector and the local AI agent.
+/// Bridge between the WWS connector and the local AI agent.
 ///
 /// Manages the task queue, formats tasks for the agent, and converts
 /// agent outputs into protocol-compliant artifacts.

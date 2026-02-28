@@ -1,10 +1,10 @@
-//! Terminal User Interface (TUI) for monitoring the ASIP.Connector.
+//! Terminal User Interface (TUI) for monitoring the WWS.Connector.
 //!
 //! Provides a live dashboard showing agent status, network statistics,
 //! active tasks, consensus state, and an event log. Built with ratatui
 //! and crossterm.
 //!
-//! Launch with `openswarm-connector --tui` to run the TUI alongside
+//! Launch with `wws-connector --tui` to run the TUI alongside
 //! the connector event loop.
 
 use std::io::{self, Stdout};

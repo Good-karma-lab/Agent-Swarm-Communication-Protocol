@@ -1,4 +1,4 @@
-//! Integration tests for the OpenSwarm Protocol.
+//! Integration tests for the WWS Protocol.
 //!
 //! These tests verify end-to-end protocol flows by composing
 //! multiple crates together. They test the full lifecycle:

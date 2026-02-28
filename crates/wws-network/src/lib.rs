@@ -1,6 +1,6 @@
-//! ASIP Network - P2P networking layer using libp2p
+//! WWS Network - P2P networking layer using libp2p
 //!
-//! Provides the foundational networking for the Agent Swarm Intelligence Protocol (ASIP):
+//! Provides the foundational networking for the World Wide Swarm (WWS) protocol:
 //! - Peer discovery via mDNS and Kademlia DHT
 //! - Message passing via GossipSub pub/sub
 //! - Swarm size estimation from Kademlia routing table density

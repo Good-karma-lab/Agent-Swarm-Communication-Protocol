@@ -1,6 +1,6 @@
-//! OpenSwarm Consensus - Competitive planning and Ranked Choice Voting
+//! WWS Consensus - Competitive planning and Ranked Choice Voting
 //!
-//! Implements the consensus mechanisms for the OpenSwarm protocol:
+//! Implements the consensus mechanisms for the WWS protocol:
 //! - Request for Proposal (RFP) protocol with commit-reveal scheme
 //! - Ranked Choice Voting with Instant Runoff Voting (IRV)
 //! - Recursive decomposition cascade for multi-tier task distribution

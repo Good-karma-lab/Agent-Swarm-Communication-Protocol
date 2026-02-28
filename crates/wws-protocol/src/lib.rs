@@ -1,6 +1,6 @@
-//! ASIP - Core types and message definitions
+//! WWS Protocol - Core types and message definitions
 //!
-//! Implements the Agent Swarm Intelligence Protocol (ASIP) message specification
+//! Implements the World Wide Swarm (WWS) message specification
 //! using JSON-RPC 2.0 envelope format with Ed25519 signatures.
 
 pub mod identity;

@@ -1,4 +1,4 @@
-//! Multi-agent integration tests for the OpenSwarm Protocol.
+//! Multi-agent integration tests for the WWS Protocol.
 //!
 //! These tests spawn multiple SwarmHost instances on the local machine,
 //! verify that they discover each other via mDNS, and test message
@@ -182,7 +182,7 @@ async fn test_gossipsub_message_exchange() {
         .expect("Connection should establish");
 
     // Both subscribe to the same topic.
-    let topic = "openswarm/test/messages";
+    let topic = "wws/test/messages";
     handle_a.subscribe(topic).await.expect("A subscribe");
     handle_b.subscribe(topic).await.expect("B subscribe");
 
