@@ -1294,7 +1294,15 @@ impl OpenSwarmConnector {
                     }
                     state.mark_member_seen(voter.as_str());
                     if let Some(task) = state.task_details.get_mut(&task_id) {
-                        task.status = TaskStatus::VotingPhase;
+                        // Only advance to VotingPhase from pre-voting states.
+                        // Never overwrite InProgress/Completed/Failed tasks — a stale
+                        // ConsensusVote arriving after TaskAssignment must not revert the task.
+                        if matches!(
+                            task.status,
+                            TaskStatus::Pending | TaskStatus::ProposalPhase | TaskStatus::VotingPhase
+                        ) {
+                            task.status = TaskStatus::VotingPhase;
+                        }
                     }
                     if let Some(voting) = state.voting_engines.get_mut(&task_id) {
                         let ranked_vote = RankedVote {
