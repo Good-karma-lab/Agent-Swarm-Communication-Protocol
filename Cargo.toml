@@ -27,8 +27,8 @@ tokio = { version = "1", features = ["full"] }
 ed25519-dalek = { version = "2", features = ["serde", "rand_core"] }
 sha2 = "0.10"
 rand = "0.8"
-bip39    = "2"
-zeroize  = { version = "1", features = ["derive"] }
+bip39 = "2"
+zeroize = { version = "1", features = ["derive"] }
 
 # Logging
 tracing = "0.1"
@@ -46,7 +46,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 # Config
 toml = "0.8"
-dirs     = "5"
+dirs = "6"
 
 # TUI
 ratatui = "0.29"
