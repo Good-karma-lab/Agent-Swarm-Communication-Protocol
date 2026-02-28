@@ -55,6 +55,7 @@ AGENT_NAME=""
 BOOTSTRAP_PEER=""
 SWARM_ID="public"
 CONNECTOR_ONLY=false
+IDENTITY_PATH=""
 
 usage() {
     cat << EOF
@@ -66,8 +67,9 @@ Usage: $0 [OPTIONS]
 
 Options:
     -n, --name NAME          Agent name (default: auto-generated)
-    -b, --bootstrap ADDR     Bootstrap peer multiaddress
+    -b, --bootstrap ADDR     Bootstrap peer multiaddress (optional; built-in defaults used if omitted)
     -s, --swarm-id ID        Swarm ID to join (default: public)
+    --identity-path PATH     Path to identity key file (default: ~/.wws/<name>.key)
     --agent-impl IMPL        Agent implementation: claude-code-cli | zeroclaw (default: $AGENT_IMPL)
     --llm-backend BACKEND    LLM backend for Zeroclaw: anthropic | openai | openrouter | local | ollama (default: $LLM_BACKEND)
     --model-name NAME        Model name (default: $MODEL_NAME)
@@ -130,6 +132,10 @@ while [[ $# -gt 0 ]]; do
             MODEL_NAME="$2"
             shift 2
             ;;
+        --identity-path)
+            IDENTITY_PATH="$2"
+            shift 2
+            ;;
         --connector-only)
             CONNECTOR_ONLY=true
             shift
@@ -148,6 +154,12 @@ done
 if [ -z "$AGENT_NAME" ]; then
     AGENT_NAME="agent-$(date +%s)-$$"
 fi
+
+# Default identity path to ~/.wws/<agent-name>.key
+if [ -z "$IDENTITY_PATH" ]; then
+    IDENTITY_PATH="$HOME/.wws/${AGENT_NAME}.key"
+fi
+mkdir -p "$HOME/.wws"
 
 if [ "$AGENT_IMPL" = "zeroclaw" ] && [ "$ZEROCLAW_AUTO_UPDATE" = "true" ]; then
     if [ -x "./scripts/update-zeroclaw.sh" ]; then
@@ -190,6 +202,8 @@ CONNECTOR_CMD="$CONNECTOR_CMD --listen /ip4/0.0.0.0/tcp/$P2P_PORT"
 CONNECTOR_CMD="$CONNECTOR_CMD --rpc 127.0.0.1:$RPC_PORT"
 CONNECTOR_CMD="$CONNECTOR_CMD --files-addr 127.0.0.1:$FILES_PORT"
 CONNECTOR_CMD="$CONNECTOR_CMD --agent-name \"$AGENT_NAME\""
+CONNECTOR_CMD="$CONNECTOR_CMD --wws-name \"$AGENT_NAME\""
+CONNECTOR_CMD="$CONNECTOR_CMD --identity-path \"$IDENTITY_PATH\""
 CONNECTOR_CMD="$CONNECTOR_CMD --swarm-id \"$SWARM_ID\""
 
 if [ -n "$BOOTSTRAP_PEER" ]; then
@@ -203,6 +217,7 @@ echo -e "${GREEN}║         WorldWideSwarm Agent Starting...                   
 echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "${BLUE}Agent Name:${NC}     $AGENT_NAME"
+echo -e "${BLUE}Identity:${NC}       $IDENTITY_PATH"
 if [ "$AGENT_IMPL" = "zeroclaw" ]; then
     echo -e "${BLUE}LLM Backend:${NC}    $LLM_BACKEND"
     echo -e "${BLUE}Model Name:${NC}     $MODEL_NAME"
