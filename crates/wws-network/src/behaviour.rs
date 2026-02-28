@@ -1,4 +1,5 @@
-//! Custom NetworkBehaviour composing Kademlia + GossipSub + mDNS + Identify + Ping + AutoNAT.
+//! Custom NetworkBehaviour composing Kademlia + GossipSub + mDNS + Identify + Ping + AutoNAT
+//! + Circuit Relay client + DCUtR hole-punching.
 //!
 //! This module defines the composite behaviour for the WWS network node.
 //! Each sub-behaviour handles a specific aspect of peer-to-peer communication:
@@ -8,11 +9,13 @@
 //! - **Identify**: Peer identification and capability exchange
 //! - **Ping**: Connection liveness checking
 //! - **AutoNAT**: NAT traversal status detection
+//! - **Relay client**: Circuit relay for NAT traversal via public relay nodes
+//! - **DCUtR**: Direct Connection Upgrade through Relay (hole-punching)
 
 use std::time::Duration;
 
 use libp2p::{
-    autonat, gossipsub, identify, kad, mdns, ping,
+    autonat, dcutr, gossipsub, identify, kad, mdns, ping, relay,
     identity::Keypair,
     swarm::NetworkBehaviour,
     StreamProtocol,
@@ -38,6 +41,10 @@ pub struct SwarmBehaviour {
     pub ping: ping::Behaviour,
     /// AutoNAT for detecting NAT status and public reachability.
     pub autonat: autonat::Behaviour,
+    /// Circuit relay client for NAT traversal via public relay nodes.
+    pub relay_client: relay::client::Behaviour,
+    /// DCUtR: Direct Connection Upgrade through Relay for hole-punching.
+    pub dcutr: dcutr::Behaviour,
 }
 
 /// Configuration for constructing the composite behaviour.
@@ -71,10 +78,15 @@ impl Default for BehaviourConfig {
 }
 
 impl SwarmBehaviour {
-    /// Construct a new composite behaviour from a keypair and configuration.
+    /// Construct a new composite behaviour from a keypair, configuration, and relay client.
     ///
-    /// This wires up all six sub-behaviours with the provided settings.
-    pub fn new(key: &Keypair, config: &BehaviourConfig) -> Result<Self, NetworkError> {
+    /// The `relay_client` is extracted from the SwarmBuilder (via `.with_relay_client()`)
+    /// and must be passed in — it cannot be constructed independently.
+    pub fn new(
+        key: &Keypair,
+        config: &BehaviourConfig,
+        relay_client: relay::client::Behaviour,
+    ) -> Result<Self, NetworkError> {
         let peer_id = key.public().to_peer_id();
 
         // -- Kademlia --
@@ -124,6 +136,10 @@ impl SwarmBehaviour {
         // -- AutoNAT --
         let autonat = autonat::Behaviour::new(peer_id, autonat::Config::default());
 
+        // -- DCUtR (hole-punching) --
+        // Requires the relay_client to already be in scope; dcutr only needs peer_id.
+        let dcutr = dcutr::Behaviour::new(peer_id);
+
         Ok(Self {
             kademlia,
             gossipsub,
@@ -131,6 +147,8 @@ impl SwarmBehaviour {
             identify,
             ping,
             autonat,
+            relay_client,
+            dcutr,
         })
     }
 }
