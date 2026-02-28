@@ -35,6 +35,33 @@ pub struct ConnectorConfig {
     /// HTTP file server configuration for agent onboarding.
     #[serde(default)]
     pub file_server: FileServerConfig,
+    /// Agent identity configuration.
+    #[serde(default)]
+    pub identity: IdentityConfig,
+}
+
+/// Agent identity configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdentityConfig {
+    /// Path to the Ed25519 identity key file (32-byte seed, mode 0600).
+    #[serde(default = "default_identity_path")]
+    pub path: std::path::PathBuf,
+    /// Optional wws:// name to register on startup.
+    #[serde(default)]
+    pub wws_name: Option<String>,
+}
+
+fn default_identity_path() -> std::path::PathBuf {
+    default_identity_dir().join("identity.key")
+}
+
+impl Default for IdentityConfig {
+    fn default() -> Self {
+        Self {
+            path: default_identity_path(),
+            wws_name: None,
+        }
+    }
 }
 
 /// HTTP file server configuration for serving agent onboarding docs.
@@ -230,6 +257,7 @@ impl Default for ConnectorConfig {
             logging: LoggingConfig::default(),
             swarm: SwarmConfig::default(),
             file_server: FileServerConfig::default(),
+            identity: IdentityConfig::default(),
         }
     }
 }
@@ -362,6 +390,12 @@ impl ConnectorConfig {
         }
         if let Ok(val) = std::env::var("WWS_FILE_SERVER_ENABLED") {
             self.file_server.enabled = val == "true" || val == "1";
+        }
+        if let Ok(val) = std::env::var("WWS_IDENTITY_PATH") {
+            self.identity.path = std::path::PathBuf::from(val);
+        }
+        if let Ok(val) = std::env::var("WWS_NAME") {
+            self.identity.wws_name = Some(val);
         }
     }
 
