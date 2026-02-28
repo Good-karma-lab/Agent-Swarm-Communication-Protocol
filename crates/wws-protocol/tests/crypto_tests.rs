@@ -10,6 +10,20 @@
 use wws_protocol::crypto::*;
 
 // ═══════════════════════════════════════════════════════════════
+// § DEFAULT_BOOTSTRAP_PEERS
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn test_default_bootstrap_peers_non_empty() {
+    use wws_protocol::DEFAULT_BOOTSTRAP_PEERS;
+    assert!(!DEFAULT_BOOTSTRAP_PEERS.is_empty());
+    for peer in DEFAULT_BOOTSTRAP_PEERS {
+        assert!(peer.starts_with("/dns4/") || peer.starts_with("/ip4/"),
+            "Expected peer addr to start with /dns4/ or /ip4/, got: {peer}");
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // § 3.3 Identity — Agent ID Derivation
 // ═══════════════════════════════════════════════════════════════
 

@@ -90,6 +90,21 @@ pub struct NetworkConfig {
     /// Idle connection timeout in seconds.
     #[serde(default = "default_idle_timeout")]
     pub idle_connection_timeout_secs: u64,
+    /// Run as a public bootstrap node (no agent bridge, high capacity).
+    #[serde(default)]
+    pub bootstrap_mode: bool,
+    /// Enable QUIC transport alongside TCP.
+    #[serde(default = "default_true")]
+    pub enable_quic: bool,
+    /// Enable circuit relay client (for NAT traversal).
+    #[serde(default = "default_true")]
+    pub enable_relay_client: bool,
+    /// Enable relay server (bootstrap nodes set this true automatically).
+    #[serde(default)]
+    pub enable_relay_server: bool,
+    /// Enable hole-punching upgrade (DCUtR).
+    #[serde(default = "default_true")]
+    pub enable_dcutr: bool,
 }
 
 /// Hierarchy and epoch configuration.
@@ -269,6 +284,11 @@ impl Default for NetworkConfig {
             bootstrap_peers: Vec::new(),
             mdns_enabled: true,
             idle_connection_timeout_secs: default_idle_timeout(),
+            bootstrap_mode: false,
+            enable_quic: true,
+            enable_relay_client: true,
+            enable_relay_server: false,
+            enable_dcutr: true,
         }
     }
 }

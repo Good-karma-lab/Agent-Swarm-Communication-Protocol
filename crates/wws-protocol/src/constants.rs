@@ -47,3 +47,16 @@ pub const SWARM_MEMBERSHIP_PREFIX: &str = "/wws/membership/";
 
 /// Swarm announcement interval in seconds.
 pub const SWARM_ANNOUNCE_INTERVAL_SECS: u64 = 30;
+
+/// Default well-known bootstrap peers.
+/// These are entry points only — not required after joining the mesh.
+pub const DEFAULT_BOOTSTRAP_PEERS: &[&str] = &[
+    "/dns4/bootstrap1.wws.dev/tcp/9000/p2p/12D3KooWPLACEHOLDER1",
+    "/dns4/bootstrap2.wws.dev/tcp/9000/p2p/12D3KooWPLACEHOLDER2",
+    "/dns4/bootstrap3.wws.dev/tcp/9000/p2p/12D3KooWPLACEHOLDER3",
+];
+
+/// Bootstrap mode: maximum connected peers
+pub const BOOTSTRAP_MAX_PEERS: u32 = 10_000;
+/// Bootstrap mode: Kademlia replication factor
+pub const BOOTSTRAP_REPLICATION_FACTOR: usize = 20;

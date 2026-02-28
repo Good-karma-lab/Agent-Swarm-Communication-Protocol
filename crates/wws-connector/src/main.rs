@@ -87,6 +87,10 @@ struct Cli {
     /// Path to the identity key file (default: ~/.wws/identity.key).
     #[arg(long, value_name = "PATH")]
     identity_path: Option<String>,
+
+    /// Run as a public bootstrap node (no agent bridge, high capacity).
+    #[arg(long)]
+    bootstrap_mode: bool,
 }
 
 #[tokio::main]
@@ -126,6 +130,12 @@ async fn main() -> anyhow::Result<()> {
     }
     if cli.no_files {
         config.file_server.enabled = false;
+    }
+    if cli.bootstrap_mode {
+        config.network.bootstrap_mode = true;
+        config.network.enable_relay_server = true;
+        tracing::info!("Starting in BOOTSTRAP MODE");
+        eprintln!("=== Bootstrap Node Mode ===");
     }
 
     // Apply identity CLI overrides.
