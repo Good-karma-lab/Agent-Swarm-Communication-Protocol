@@ -16,3 +16,14 @@ pub use messages::*;
 pub use types::*;
 pub use error::*;
 pub use constants::*;
+pub use key_rotation::{
+    RotationAnnouncement,
+    EmergencyRevocation,
+    GuardianDesignation,
+    GuardianRecoveryVote,
+    verify_guardian_threshold,
+    build_rotation_announcement,
+    verify_rotation_announcement,
+    current_timestamp_secs,
+    ROTATION_TIMESTAMP_TOLERANCE_SECS,
+};
