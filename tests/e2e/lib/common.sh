@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-BIN="$ROOT_DIR/target/release/openswarm-connector"
+BIN="$ROOT_DIR/target/release/wws-connector"
 
 log() {
     printf "[%s] %s\n" "$(date +%H:%M:%S)" "$*"

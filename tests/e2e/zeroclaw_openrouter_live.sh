@@ -32,7 +32,7 @@ echo "[live-e2e] Starting 5 agents with ZeroClaw + OpenRouter"
 
 sleep 20
 
-RPC_PORT=$(awk -F'|' 'NR==1 {print $5}' /tmp/openswarm-swarm/nodes.txt)
+RPC_PORT=$(awk -F'|' 'NR==1 {print $5}' /tmp/wws-swarm/nodes.txt)
 if [[ -z "$RPC_PORT" ]]; then
     echo "[live-e2e] Failed to read RPC port from nodes file"
     exit 1

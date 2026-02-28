@@ -66,7 +66,7 @@ if not root_edges:
     raise SystemExit("[validate] topology missing root_hierarchy edges")
 
 ports = []
-for line in pathlib.Path("/tmp/openswarm-swarm/nodes.txt").read_text().splitlines():
+for line in pathlib.Path("/tmp/wws-swarm/nodes.txt").read_text().splitlines():
     parts = line.split("|")
     if len(parts) >= 5:
         ports.append(parts[4])

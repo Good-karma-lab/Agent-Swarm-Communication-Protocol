@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PID_FILE="/tmp/openswarm-swarm/operator-web-30.pid"
+PID_FILE="/tmp/wws-swarm/operator-web-30.pid"
 
 cd "$ROOT_DIR"
 

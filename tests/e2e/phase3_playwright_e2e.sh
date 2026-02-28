@@ -38,7 +38,7 @@ cleanup() {
     fi
     # phase3 agents launched with & — kill by script name too
     pkill -f "phase3_agent.py" 2>/dev/null || true
-    pkill -f "openswarm-connector" 2>/dev/null || true
+    pkill -f "wws-connector" 2>/dev/null || true
     sleep 1
     log "All processes stopped."
 }
@@ -48,8 +48,8 @@ trap cleanup EXIT
 
 log "Building release binary..."
 cd "$ROOT_DIR"
-cargo build --release -p openswarm-connector 2>&1 | tail -3
-log "Binary ready: target/release/openswarm-connector"
+cargo build --release -p wws-connector 2>&1 | tail -3
+log "Binary ready: target/release/wws-connector"
 
 # ── Step 2: Start 20 connectors ──────────────────────────────────────────────
 

@@ -21,7 +21,7 @@ if [ -f "$LOAD_ENV_ROOT_DIR/.env" ]; then
     rm -f "$_pre_env_snapshot"
 fi
 
-if [ -f "$LOAD_ENV_ROOT_DIR/openswarm.conf" ]; then
+if [ -f "$LOAD_ENV_ROOT_DIR/wws.conf" ]; then
     # shellcheck disable=SC1091
-    source "$LOAD_ENV_ROOT_DIR/openswarm.conf"
+    source "$LOAD_ENV_ROOT_DIR/wws.conf"
 fi

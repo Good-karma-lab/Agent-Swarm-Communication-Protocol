@@ -13,7 +13,7 @@ OPENCODE_MODEL="${OPENCODE_MODEL:-openai/gpt-5.2-codex}"
 POLL_INTERVAL="${POLL_INTERVAL:-30}"
 
 # File to track processed task IDs (works on bash 3 / macOS)
-PROCESSED_FILE=$(mktemp /tmp/openswarm-processed-XXXX)
+PROCESSED_FILE=$(mktemp /tmp/wws-processed-XXXX)
 trap 'rm -f "$PROCESSED_FILE"' EXIT
 
 # ---------------------------------------------------------------------------

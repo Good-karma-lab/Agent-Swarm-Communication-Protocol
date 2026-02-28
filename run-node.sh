@@ -128,13 +128,13 @@ RPC_PORT=$(find_available_port 9370)
 LOCAL_IP=$(get_local_ip)
 
 # Build the connector if not already built
-if [ ! -f "target/release/openswarm-connector" ]; then
+if [ ! -f "target/release/wws-connector" ]; then
     echo -e "${YELLOW}Building OpenSwarm connector...${NC}"
     cargo build --release
 fi
 
 # Prepare command
-CMD="./target/release/openswarm-connector"
+CMD="./target/release/wws-connector"
 CMD="$CMD --listen /ip4/0.0.0.0/tcp/$P2P_PORT"
 CMD="$CMD --rpc 127.0.0.1:$RPC_PORT"
 CMD="$CMD --agent-name \"$AGENT_NAME\""
@@ -187,7 +187,7 @@ echo -e "${GREEN}═════════════════════
 echo ""
 
 # Save PID for easy cleanup
-PID_FILE="/tmp/openswarm-$AGENT_NAME.pid"
+PID_FILE="/tmp/wws-$AGENT_NAME.pid"
 
 # Cleanup function
 cleanup() {
@@ -231,7 +231,7 @@ if [ "$TUI_MODE" = false ]; then
         echo ""
 
         # Save connection info to a file for easy reference
-        INFO_FILE="/tmp/openswarm-$AGENT_NAME-info.txt"
+        INFO_FILE="/tmp/wws-$AGENT_NAME-info.txt"
         cat > "$INFO_FILE" << INFOEOF
 ASIP.Connector: $AGENT_NAME
 Started: $(date)

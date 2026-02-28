@@ -28,7 +28,7 @@ export ZEROCLAW_AUTO_UPDATE="${ZEROCLAW_AUTO_UPDATE:-false}"
 
 cd "$ROOT_DIR"
 
-cargo build --release -p openswarm-connector >/dev/null
+cargo build --release -p wws-connector >/dev/null
 
 python3 - <<'PY'
 import json
@@ -71,7 +71,7 @@ def run_console(bootstrap: str, scale: int):
     rpcp = 12300 + scale
     files = 12400 + scale
     cmd = (
-        "target/release/openswarm-connector "
+        "target/release/wws-connector "
         f"--listen /ip4/127.0.0.1/tcp/{p2p} "
         f"--rpc 127.0.0.1:{rpcp} "
         f"--files-addr 127.0.0.1:{files} "
@@ -88,7 +88,7 @@ def run_console(bootstrap: str, scale: int):
     time.sleep(1)
     if child.isalive():
         child.terminate(force=True)
-    Path(f"/tmp/openswarm-live-gate-console-{scale}.log").write_text((child.before or "")[-20000:])
+    Path(f"/tmp/wws-live-gate-console-{scale}.log").write_text((child.before or "")[-20000:])
 
 
 results = []
@@ -98,7 +98,7 @@ for scale in SCALES:
     run("./swarm-manager.sh stop >/dev/null 2>&1 || true", check=False)
     run(f"./swarm-manager.sh start-agents {scale}", timeout=1200, check=True)
 
-    rows = [line.split("|") for line in Path("/tmp/openswarm-swarm/nodes.txt").read_text().splitlines() if line.strip()]
+    rows = [line.split("|") for line in Path("/tmp/wws-swarm/nodes.txt").read_text().splitlines() if line.strip()]
     first = rows[0]
     first_rpc = first[4]
     first_p2p = first[3]
@@ -235,7 +235,7 @@ for scale in SCALES:
         missing = sorted(REQUIRED_STAGES - stages)
         failures.append(f"scale={scale}: missing timeline stages {missing}")
 
-Path("/tmp/openswarm-live-gate-matrix.json").write_text(json.dumps(results, indent=2))
+Path("/tmp/wws-live-gate-matrix.json").write_text(json.dumps(results, indent=2))
 run("./swarm-manager.sh stop >/dev/null 2>&1 || true", check=False)
 
 if failures:

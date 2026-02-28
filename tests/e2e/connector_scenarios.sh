@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 
-TMP_DIR="$(mktemp -d /tmp/openswarm-e2e-scenarios.XXXXXX)"
+TMP_DIR="$(mktemp -d /tmp/wws-e2e-scenarios.XXXXXX)"
 PIDS=()
 
 cleanup() {
@@ -39,7 +39,7 @@ register_agent() {
 
 cd "$ROOT_DIR"
 log "Building release binary"
-cargo build --release -p openswarm-connector >/dev/null
+cargo build --release -p wws-connector >/dev/null
 
 # Scenario 1: connection + bootstrap discovery (internet-style)
 log "Scenario 1: connection and internet-style autodiscovery"
@@ -109,10 +109,10 @@ fi
 
 # Scenario 4: peer-to-peer messaging (existing network integration test)
 log "Scenario 4: peer-to-peer messaging"
-cargo test -p openswarm-connector --test multi_agent_tests test_same_tier_task_topic_exchange_between_peers -- --ignored >/dev/null
+cargo test -p wws-connector --test multi_agent_tests test_same_tier_task_topic_exchange_between_peers -- --ignored >/dev/null
 
 # Scenario 5: scaling smoke
 log "Scenario 5: scaling smoke"
-cargo test -p openswarm-connector --test multi_agent_tests test_three_node_network -- --ignored >/dev/null
+cargo test -p wws-connector --test multi_agent_tests test_three_node_network -- --ignored >/dev/null
 
 log "Connector scenario suite PASSED"

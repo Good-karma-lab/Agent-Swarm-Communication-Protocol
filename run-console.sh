@@ -18,7 +18,7 @@ done
 echo "Rebuilding OpenSwarm connector..."
 cargo build --release
 
-cmd=("./target/release/openswarm-connector" "--console")
+cmd=("./target/release/wws-connector" "--console")
 
 if [[ "$agent_name_set" == false ]]; then
     cmd+=("--agent-name" "operator")

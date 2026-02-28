@@ -15,7 +15,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-SWARM_DIR="/tmp/openswarm-swarm"
+SWARM_DIR="/tmp/wws-swarm"
 NODES_FILE="$SWARM_DIR/nodes.txt"
 
 # Load shared environment and config defaults
@@ -123,7 +123,7 @@ start_nodes() {
     echo ""
 
     # Build the connector if not already built
-    if [ ! -f "target/release/openswarm-connector" ]; then
+    if [ ! -f "target/release/wws-connector" ]; then
         echo -e "${YELLOW}Building OpenSwarm connector...${NC}"
         cargo build --release
     fi
@@ -146,7 +146,7 @@ start_nodes() {
         local rpc_port=$(find_available_port $((9370 + i - 1)))
 
         # Build command
-        local cmd="./target/release/openswarm-connector"
+        local cmd="./target/release/wws-connector"
         cmd="$cmd --listen /ip4/0.0.0.0/tcp/$p2p_port"
         cmd="$cmd --rpc 127.0.0.1:$rpc_port"
         cmd="$cmd --agent-name $node_name"
@@ -265,7 +265,7 @@ stop_nodes() {
 
     # Safety net: terminate orphaned OpenSwarm processes not present in nodes.txt.
     local orphan_connectors
-    orphan_connectors=$(pgrep -f 'openswarm-connector' || true)
+    orphan_connectors=$(pgrep -f 'wws-connector' || true)
     if [ -n "$orphan_connectors" ]; then
         echo -e "  Cleaning orphan connectors: $orphan_connectors"
         kill $orphan_connectors 2>/dev/null || true
@@ -441,8 +441,8 @@ clean_up() {
     fi
 
     # Remove other temp files
-    rm -f /tmp/openswarm-*.pid
-    rm -f /tmp/openswarm-*-info.txt
+    rm -f /tmp/wws-*.pid
+    rm -f /tmp/wws-*-info.txt
     rm -f /tmp/node*.log
 
     echo -e "${GREEN}Cleanup complete.${NC}"
@@ -456,7 +456,7 @@ start_agents() {
     echo ""
 
     # Build the connector if not already built
-    if [ ! -f "target/release/openswarm-connector" ]; then
+    if [ ! -f "target/release/wws-connector" ]; then
         echo -e "${YELLOW}Building OpenSwarm connector...${NC}"
         cargo build --release
     fi
@@ -516,7 +516,7 @@ start_agents() {
         local files_port=$(find_available_port $((rpc_port + 1)))
 
         # Build connector command
-        local connector_cmd="./target/release/openswarm-connector"
+        local connector_cmd="./target/release/wws-connector"
         connector_cmd="$connector_cmd --listen /ip4/127.0.0.1/tcp/$p2p_port"
         connector_cmd="$connector_cmd --rpc 127.0.0.1:$rpc_port"
         connector_cmd="$connector_cmd --files-addr 127.0.0.1:$files_port"

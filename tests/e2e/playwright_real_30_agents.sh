@@ -31,14 +31,14 @@ if ! command -v cargo >/dev/null 2>&1; then
     echo "[playwright-real] cargo not found in PATH. Install Rust or add cargo to PATH."
     exit 1
 fi
-cargo build --release -p openswarm-connector >/dev/null
+cargo build --release -p wws-connector >/dev/null
 
 echo "[playwright-real] Starting swarm of 30 agents"
 echo "[playwright-real] LLM backend: ${LLM_BACKEND:-unset}, model: ${MODEL_NAME:-unset}"
 ./swarm-manager.sh start-agents 30
 
-RPC_PORT=$(awk -F'|' 'NR==1 {print $5}' /tmp/openswarm-swarm/nodes.txt)
-P2P_PORT=$(awk -F'|' 'NR==1 {print $4}' /tmp/openswarm-swarm/nodes.txt)
+RPC_PORT=$(awk -F'|' 'NR==1 {print $5}' /tmp/wws-swarm/nodes.txt)
+P2P_PORT=$(awk -F'|' 'NR==1 {print $4}' /tmp/wws-swarm/nodes.txt)
 
 if [ -z "$RPC_PORT" ] || [ -z "$P2P_PORT" ]; then
     echo "[playwright-real] Failed to parse swarm node info"
@@ -57,13 +57,13 @@ PEER_ID=$(echo '{"jsonrpc":"2.0","method":"swarm.get_status","params":{},"id":"s
 BOOTSTRAP_ADDR="/ip4/127.0.0.1/tcp/$P2P_PORT/p2p/$PEER_ID"
 
 echo "[playwright-real] Starting dedicated web console connector"
-./target/release/openswarm-connector \
+./target/release/wws-connector \
   --listen /ip4/127.0.0.1/tcp/22900 \
   --rpc 127.0.0.1:22970 \
   --files-addr 127.0.0.1:22971 \
   --bootstrap "$BOOTSTRAP_ADDR" \
   --agent-name operator-web-30 \
-  > /tmp/openswarm-playwright-console.log 2>&1 &
+  > /tmp/wws-playwright-console.log 2>&1 &
 CONSOLE_PID=$!
 
 echo "[playwright-real] Waiting for web console readiness"

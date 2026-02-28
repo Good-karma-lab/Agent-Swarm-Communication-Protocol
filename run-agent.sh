@@ -179,13 +179,13 @@ FILES_PORT=$(find_available_port $((RPC_PORT + 1)))
 LOCAL_IP=$(get_local_ip)
 
 # Build the connector if not already built
-if [ ! -f "target/release/openswarm-connector" ]; then
+if [ ! -f "target/release/wws-connector" ]; then
     echo -e "${YELLOW}Building OpenSwarm connector...${NC}"
     cargo build --release
 fi
 
 # Prepare connector command
-CONNECTOR_CMD="./target/release/openswarm-connector"
+CONNECTOR_CMD="./target/release/wws-connector"
 CONNECTOR_CMD="$CONNECTOR_CMD --listen /ip4/0.0.0.0/tcp/$P2P_PORT"
 CONNECTOR_CMD="$CONNECTOR_CMD --rpc 127.0.0.1:$RPC_PORT"
 CONNECTOR_CMD="$CONNECTOR_CMD --files-addr 127.0.0.1:$FILES_PORT"
@@ -218,8 +218,8 @@ echo -e "  ${BLUE}File Server:${NC}   http://127.0.0.1:$FILES_PORT"
 echo ""
 
 # Save PID files for cleanup
-CONNECTOR_PID_FILE="/tmp/openswarm-agent-$AGENT_NAME-connector.pid"
-CLAUDE_PID_FILE="/tmp/openswarm-agent-$AGENT_NAME-claude.pid"
+CONNECTOR_PID_FILE="/tmp/wws-agent-$AGENT_NAME-connector.pid"
+CLAUDE_PID_FILE="/tmp/wws-agent-$AGENT_NAME-claude.pid"
 
 # Cleanup function
 cleanup() {
@@ -256,7 +256,7 @@ trap cleanup INT TERM
 
 # Start the connector in background
 echo -e "${BLUE}Starting swarm connector...${NC}"
-eval "$CONNECTOR_CMD" > "/tmp/openswarm-agent-$AGENT_NAME-connector.log" 2>&1 &
+eval "$CONNECTOR_CMD" > "/tmp/wws-agent-$AGENT_NAME-connector.log" 2>&1 &
 CONNECTOR_PID=$!
 echo $CONNECTOR_PID > "$CONNECTOR_PID_FILE"
 
@@ -266,7 +266,7 @@ sleep 3
 
 # Check if connector is still running
 if ! ps -p $CONNECTOR_PID > /dev/null 2>&1; then
-    echo -e "${RED}✗ Connector failed to start. Check logs at /tmp/openswarm-agent-$AGENT_NAME-connector.log${NC}"
+    echo -e "${RED}✗ Connector failed to start. Check logs at /tmp/wws-agent-$AGENT_NAME-connector.log${NC}"
     exit 1
 fi
 

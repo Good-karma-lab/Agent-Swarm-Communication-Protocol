@@ -7,7 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-BIN="$ROOT_DIR/target/release/openswarm-connector"
+BIN="$ROOT_DIR/target/release/wws-connector"
 SWARM_DIR="/tmp/asip-test"
 NODES_FILE="$SWARM_DIR/nodes.txt"
 
@@ -23,7 +23,7 @@ mkdir -p "$SWARM_DIR"
 > "$NODES_FILE"
 
 # Kill any leftover connectors
-pkill -f 'openswarm-connector' 2>/dev/null || true
+pkill -f 'wws-connector' 2>/dev/null || true
 sleep 1
 
 BOOTSTRAP_ADDR=""

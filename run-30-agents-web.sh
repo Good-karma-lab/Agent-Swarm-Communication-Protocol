@@ -30,17 +30,17 @@ if ! command -v cargo >/dev/null 2>&1; then
     echo "[run-30] cargo not found in PATH. Install Rust or add cargo to PATH."
     exit 1
 fi
-cargo build --release -p openswarm-connector >/dev/null
+cargo build --release -p wws-connector >/dev/null
 
 echo "[run-30] Starting $AGENT_COUNT agents"
 echo "[run-30] LLM backend: ${LLM_BACKEND:-unset}, model: ${MODEL_NAME:-unset}"
 ./swarm-manager.sh start-agents "$AGENT_COUNT"
 
-RPC_PORT=$(awk -F'|' 'NR==1 {print $5}' /tmp/openswarm-swarm/nodes.txt)
-P2P_PORT=$(awk -F'|' 'NR==1 {print $4}' /tmp/openswarm-swarm/nodes.txt)
+RPC_PORT=$(awk -F'|' 'NR==1 {print $5}' /tmp/wws-swarm/nodes.txt)
+P2P_PORT=$(awk -F'|' 'NR==1 {print $4}' /tmp/wws-swarm/nodes.txt)
 
 if [ -z "$RPC_PORT" ] || [ -z "$P2P_PORT" ]; then
-    echo "[run-30] Failed to read bootstrap ports from /tmp/openswarm-swarm/nodes.txt"
+    echo "[run-30] Failed to read bootstrap ports from /tmp/wws-swarm/nodes.txt"
     exit 1
 fi
 
@@ -48,16 +48,16 @@ PEER_ID=$(echo '{"jsonrpc":"2.0","method":"swarm.get_status","params":{},"id":"s
 BOOTSTRAP_ADDR="/ip4/127.0.0.1/tcp/$P2P_PORT/p2p/$PEER_ID"
 
 echo "[run-30] Starting dedicated web console connector"
-./target/release/openswarm-connector \
+./target/release/wws-connector \
   --listen "/ip4/127.0.0.1/tcp/$CONSOLE_P2P_PORT" \
   --rpc "127.0.0.1:$CONSOLE_RPC_PORT" \
   --files-addr "127.0.0.1:$CONSOLE_WEB_PORT" \
   --bootstrap "$BOOTSTRAP_ADDR" \
   --agent-name "operator-web-30" \
-  > /tmp/openswarm-swarm/operator-web-30.log 2>&1 &
+  > /tmp/wws-swarm/operator-web-30.log 2>&1 &
 
 CONSOLE_PID=$!
-echo "$CONSOLE_PID" > /tmp/openswarm-swarm/operator-web-30.pid
+echo "$CONSOLE_PID" > /tmp/wws-swarm/operator-web-30.pid
 
 for _ in $(seq 1 80); do
     if curl -sf "http://127.0.0.1:$CONSOLE_WEB_PORT/api/health" >/dev/null; then
@@ -68,7 +68,7 @@ done
 
 URL="http://127.0.0.1:$CONSOLE_WEB_PORT/"
 echo "[run-30] Web console ready: $URL"
-echo "[run-30] Console log: /tmp/openswarm-swarm/operator-web-30.log"
+echo "[run-30] Console log: /tmp/wws-swarm/operator-web-30.log"
 echo "[run-30] Stop all nodes: ./swarm-manager.sh stop"
 
 if command -v open >/dev/null 2>&1; then
