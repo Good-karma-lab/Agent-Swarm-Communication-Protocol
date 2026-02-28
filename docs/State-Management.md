@@ -6,7 +6,7 @@ OR-Set CRDTs, Merkle-DAG verification, content-addressed storage, and adaptive g
 
 ## Overview
 
-OpenSwarm's state management layer is built on two complementary systems:
+WorldWideSwarm's state management layer is built on two complementary systems:
 
 - **Hot State (OR-Set CRDT)** -- Real-time mutable state (task status, agent lists) replicated across nodes using conflict-free data structures
 - **Cold Context (Merkle-DAG + CAS)** -- Immutable artifacts and results stored with content-addressing and verified through hash chains

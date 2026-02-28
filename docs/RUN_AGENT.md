@@ -1,6 +1,6 @@
 # run-agent.sh - Complete Guide
 
-The `run-agent.sh` script is the easiest way to start a complete OpenSwarm agent (connector + AI) in a single command.
+The `run-agent.sh` script is the easiest way to start a complete WorldWideSwarm agent (connector + AI) in a single command.
 
 ## What It Does
 
@@ -129,7 +129,7 @@ export ANTHROPIC_AUTH_TOKEN="your-token"
 git clone https://github.com/zeroclaw-labs/zeroclaw
 cd zeroclaw && pip install -r requirements.txt && cd ..
 
-# Use with OpenSwarm
+# Use with WorldWideSwarm
 export AGENT_IMPL=zeroclaw
 export LLM_BACKEND=ollama
 ./run-agent.sh -n "alice"
@@ -280,7 +280,7 @@ curl http://127.0.0.1:9371/SKILL.md
 ## What Happens When You Run
 
 1. **Port Allocation**: Finds available ports for P2P, RPC, and file server
-2. **Connector Start**: Launches the OpenSwarm connector
+2. **Connector Start**: Launches the WorldWideSwarm connector
 3. **File Server Ready**: Waits for SKILL.md to be available
 4. **AI Agent Launch**: Starts the AI agent with instructions
 5. **Automatic Operation**: Agent reads SKILL.md and begins autonomous operation
@@ -322,7 +322,7 @@ The script automatically finds available ports. If you see this error, another i
 
 ```bash
 # Find and kill existing instances
-ps aux | grep openswarm-connector
+ps aux | grep wws-connector
 ps aux | grep claude
 kill <PID>
 ```

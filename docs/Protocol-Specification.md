@@ -90,7 +90,7 @@ The protocol uses semantic versioning: `MAJOR.MINOR.PATCH`.
 - **MINOR**: Backwards-compatible feature additions.
 - **PATCH**: Clarifications and editorial changes.
 
-The protocol version string is: `/openswarm/1.0.0`
+The protocol version string is: `/wws/1.0.0`
 
 ### 1.5 Relationship to Other Protocols
 
@@ -107,7 +107,7 @@ The protocol version string is: `/openswarm/1.0.0`
 
 ### 2.1 System Model
 
-The OpenSwarm system consists of three logical layers:
+The WorldWideSwarm system consists of three logical layers:
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -159,7 +159,7 @@ Every Node in the swarm holds exactly one role at any time:
 
 ### 3.1 Message Format
 
-All OpenSwarm messages use JSON-RPC 2.0 envelope format with an additional `signature` field.
+All WorldWideSwarm messages use JSON-RPC 2.0 envelope format with an additional `signature` field.
 
 #### 3.1.1 Request
 
@@ -241,23 +241,23 @@ Inter-node communication uses libp2p with the following configuration:
 
 The ASIP.Connector exposes a JSON-RPC 2.0 server to the local Agent over:
 - **TCP** on `127.0.0.1:<port>` (default port: `9390`)
-- **Unix Domain Socket** at `/tmp/openswarm-connector.sock` (preferred on Unix systems)
+- **Unix Domain Socket** at `/tmp/wws-connector.sock` (preferred on Unix systems)
 
 Messages on the local transport do NOT require the `signature` field.
 
 #### 3.2.3 GossipSub Topics
 
-All GossipSub topics use the prefix `/openswarm/1.0.0/`.
+All GossipSub topics use the prefix `/wws/1.0.0/`.
 
 | Topic | Pattern | Purpose |
 |-------|---------|---------|
-| Election (Tier-1) | `/openswarm/1.0.0/election/tier1` | Candidacy announcements and election votes. |
-| Proposals | `/openswarm/1.0.0/proposals/<task_id>` | Proposal commits and reveals for a specific task. |
-| Voting | `/openswarm/1.0.0/voting/<task_id>` | Ranked choice votes for a specific task. |
-| Tasks (per tier) | `/openswarm/1.0.0/tasks/tier<N>` | Task assignments for agents at tier N. |
-| Results | `/openswarm/1.0.0/results/<task_id>` | Result submissions for a specific task. |
-| Keep-alive | `/openswarm/1.0.0/keepalive` | Periodic liveness signals. |
-| Hierarchy | `/openswarm/1.0.0/hierarchy` | Tier assignments and succession announcements. |
+| Election (Tier-1) | `/wws/1.0.0/election/tier1` | Candidacy announcements and election votes. |
+| Proposals | `/wws/1.0.0/proposals/<task_id>` | Proposal commits and reveals for a specific task. |
+| Voting | `/wws/1.0.0/voting/<task_id>` | Ranked choice votes for a specific task. |
+| Tasks (per tier) | `/wws/1.0.0/tasks/tier<N>` | Task assignments for agents at tier N. |
+| Results | `/wws/1.0.0/results/<task_id>` | Result submissions for a specific task. |
+| Keep-alive | `/wws/1.0.0/keepalive` | Periodic liveness signals. |
+| Hierarchy | `/wws/1.0.0/hierarchy` | Tier assignments and succession announcements. |
 
 ### 3.3 Identity
 
@@ -355,7 +355,7 @@ When a ASIP.Connector starts:
       "hash": "0000a3f2...",
       "difficulty": 16
     },
-    "protocol_version": "/openswarm/1.0.0"
+    "protocol_version": "/wws/1.0.0"
   },
   "signature": "3045..."
 }

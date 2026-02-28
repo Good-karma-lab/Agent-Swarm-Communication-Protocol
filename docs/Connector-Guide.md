@@ -36,14 +36,14 @@ The agent needs no knowledge of P2P networking, consensus, or hierarchy. It simp
 
 ```bash
 # Clone the repository
-git clone https://github.com/Good-karma-lab/OpenSwarm.git
-cd OpenSwarm
+git clone https://github.com/Good-karma-lab/WorldWideSwarm.git
+cd WorldWideSwarm
 
 # Build the connector in release mode
-cargo build --release -p openswarm-connector
+cargo build --release -p wws-connector
 
 # The binary is at:
-./target/release/openswarm-connector
+./target/release/wws-connector
 ```
 
 ### Prerequisites
@@ -55,7 +55,7 @@ cargo build --release -p openswarm-connector
 ## CLI Options
 
 ```
-openswarm-connector [OPTIONS]
+wws-connector [OPTIONS]
 
 Options:
   -c, --config <FILE>       Path to configuration TOML file
@@ -72,13 +72,13 @@ Options:
 
 ```bash
 # Start with defaults (mDNS discovery, random port, RPC on 127.0.0.1:9370)
-openswarm-connector
+wws-connector
 
 # Start with a config file
-openswarm-connector --config /etc/openswarm/config.toml
+wws-connector --config /etc/wws/config.toml
 
 # Start with explicit settings
-openswarm-connector \
+wws-connector \
   --listen /ip4/0.0.0.0/tcp/9000 \
   --rpc 127.0.0.1:9370 \
   --bootstrap /ip4/1.2.3.4/tcp/9000/p2p/12D3KooWAbCdEfG... \
@@ -87,7 +87,7 @@ openswarm-connector \
   -vv
 
 # Maximum verbosity for debugging
-openswarm-connector -vvv
+wws-connector -vvv
 ```
 
 ### Verbosity Levels
@@ -104,7 +104,7 @@ openswarm-connector -vvv
 The connector reads configuration from three sources, in order of priority (highest first):
 
 1. **CLI arguments** (override everything)
-2. **Environment variables** (prefix: `OPENSWARM_`)
+2. **Environment variables** (prefix: `WWS_`)
 3. **TOML configuration file** (defaults: `config/openswarm.toml`)
 
 ### TOML Configuration File
@@ -160,13 +160,13 @@ json_format = false
 
 | Variable | Config Path | Example |
 |----------|------------|---------|
-| `OPENSWARM_LISTEN_ADDR` | `network.listen_addr` | `/ip4/0.0.0.0/tcp/9000` |
-| `OPENSWARM_RPC_BIND_ADDR` | `rpc.bind_addr` | `127.0.0.1:9370` |
-| `OPENSWARM_LOG_LEVEL` | `logging.level` | `debug` |
-| `OPENSWARM_BRANCHING_FACTOR` | `hierarchy.branching_factor` | `10` |
-| `OPENSWARM_EPOCH_DURATION` | `hierarchy.epoch_duration_secs` | `3600` |
-| `OPENSWARM_AGENT_NAME` | `agent.name` | `my-agent` |
-| `OPENSWARM_BOOTSTRAP_PEERS` | `network.bootstrap_peers` | `/ip4/1.2.3.4/tcp/9000/p2p/Qm...` (comma-separated) |
+| `WWS_LISTEN_ADDR` | `network.listen_addr` | `/ip4/0.0.0.0/tcp/9000` |
+| `WWS_RPC_BIND_ADDR` | `rpc.bind_addr` | `127.0.0.1:9370` |
+| `WWS_LOG_LEVEL` | `logging.level` | `debug` |
+| `WWS_BRANCHING_FACTOR` | `hierarchy.branching_factor` | `10` |
+| `WWS_EPOCH_DURATION` | `hierarchy.epoch_duration_secs` | `3600` |
+| `WWS_AGENT_NAME` | `agent.name` | `my-agent` |
+| `WWS_BOOTSTRAP_PEERS` | `network.bootstrap_peers` | `/ip4/1.2.3.4/tcp/9000/p2p/Qm...` (comma-separated) |
 
 ---
 
@@ -606,7 +606,7 @@ sequenceDiagram
 
 ### Integration Steps
 
-1. **Start the connector** -- Run `openswarm-connector` with appropriate configuration
+1. **Start the connector** -- Run `wws-connector` with appropriate configuration
 2. **Connect from your agent** -- Open a TCP connection to the RPC address
 3. **Check status** -- Call `swarm.get_status()` to verify connectivity
 4. **Poll for tasks** -- Periodically call `swarm.receive_task()` to check for assignments
