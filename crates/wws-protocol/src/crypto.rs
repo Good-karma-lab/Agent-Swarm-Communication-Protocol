@@ -91,6 +91,43 @@ fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+use std::path::Path;
+
+/// Load an Ed25519 keypair from a file, or create a new one if the file doesn't exist.
+/// The file stores the raw 32-byte Ed25519 seed with mode 0600.
+pub fn load_or_create_keypair(path: &Path) -> Result<SigningKey, crate::ProtocolError> {
+    if path.exists() {
+        let seed_bytes = std::fs::read(path)
+            .map_err(|e| crate::ProtocolError::Crypto(format!("read key file: {e}")))?;
+        if seed_bytes.len() != 32 {
+            return Err(crate::ProtocolError::Crypto(
+                format!("key file is {} bytes, expected 32", seed_bytes.len())
+            ));
+        }
+        let seed: [u8; 32] = seed_bytes.try_into().unwrap();
+        Ok(SigningKey::from_bytes(&seed))
+    } else {
+        // Create parent directory if needed
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| crate::ProtocolError::Crypto(format!("create dir: {e}")))?;
+        }
+        let mut rng = rand::thread_rng();
+        let key = SigningKey::generate(&mut rng);
+        let seed = key.to_bytes();
+        std::fs::write(path, seed)
+            .map_err(|e| crate::ProtocolError::Crypto(format!("write key file: {e}")))?;
+        // Set file permissions to 0600 (owner read/write only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| crate::ProtocolError::Crypto(format!("set permissions: {e}")))?;
+        }
+        Ok(key)
+    }
+}
+
 /// Hex-decode a string into bytes.
 pub fn hex_decode(s: &str) -> Result<Vec<u8>, ProtocolError> {
     if s.len() % 2 != 0 {

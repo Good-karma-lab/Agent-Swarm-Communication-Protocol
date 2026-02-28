@@ -244,3 +244,35 @@ fn hex_decode_empty_string() {
     let result = hex_decode("").unwrap();
     assert!(result.is_empty(), "Empty hex string should decode to empty bytes");
 }
+
+// ═══════════════════════════════════════════════════════════════
+// § load_or_create_keypair — file-backed key persistence
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn test_load_or_create_keypair_creates_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.key");
+    assert!(!path.exists());
+    let key = wws_protocol::crypto::load_or_create_keypair(&path).unwrap();
+    assert!(path.exists());
+    let _ = key.verifying_key();
+}
+
+#[test]
+fn test_load_or_create_keypair_deterministic() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.key");
+    let k1 = wws_protocol::crypto::load_or_create_keypair(&path).unwrap();
+    let k2 = wws_protocol::crypto::load_or_create_keypair(&path).unwrap();
+    assert_eq!(k1.verifying_key().as_bytes(), k2.verifying_key().as_bytes());
+}
+
+#[test]
+fn test_load_or_create_keypair_wrong_size() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("bad.key");
+    std::fs::write(&path, &[0u8; 16]).unwrap(); // wrong size
+    let result = wws_protocol::crypto::load_or_create_keypair(&path);
+    assert!(result.is_err());
+}
