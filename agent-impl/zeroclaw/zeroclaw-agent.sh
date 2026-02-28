@@ -1,6 +1,6 @@
 #!/bin/bash
-# Zeroclaw Agent Launcher for OpenSwarm
-# Runs a Zeroclaw agent connected to OpenSwarm connector
+# Zeroclaw Agent Launcher for WorldWideSwarm
+# Runs a Zeroclaw agent connected to WorldWideSwarm connector
 
 set -e
 
@@ -25,7 +25,7 @@ LLM_ARGS=""
 
 usage() {
     cat << EOF
-Zeroclaw Agent Launcher for OpenSwarm
+Zeroclaw Agent Launcher for WorldWideSwarm
 
 Usage: $0 [OPTIONS]
 

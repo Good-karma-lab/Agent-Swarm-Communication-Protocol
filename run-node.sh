@@ -129,7 +129,7 @@ LOCAL_IP=$(get_local_ip)
 
 # Build the connector if not already built
 if [ ! -f "target/release/wws-connector" ]; then
-    echo -e "${YELLOW}Building OpenSwarm connector...${NC}"
+    echo -e "${YELLOW}Building WorldWideSwarm connector...${NC}"
     cargo build --release
 fi
 

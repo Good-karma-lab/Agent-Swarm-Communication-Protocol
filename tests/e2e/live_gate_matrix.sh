@@ -30,8 +30,9 @@ cd "$ROOT_DIR"
 
 cargo build --release -p wws-connector >/dev/null
 
-python3 - <<'PY'
+ROOT_DIR="$ROOT_DIR" python3 - <<'PY'
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -39,7 +40,8 @@ from pathlib import Path
 import pexpect
 
 
-ROOT = "/Users/aostapenko/Work/OpenSwarm"
+ROOT = os.environ.get("ROOT_DIR", ".")
+ROOT = str(Path(ROOT).resolve())
 SCALES = (5, 11, 25)
 REQUIRED_STAGES = {"proposed", "subtask_created", "plan_selected", "result_submitted"}
 

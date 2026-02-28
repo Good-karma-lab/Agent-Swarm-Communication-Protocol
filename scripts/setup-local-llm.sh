@@ -1,5 +1,5 @@
 #!/bin/bash
-# Setup and run local LLM for OpenSwarm
+# Setup and run local LLM for WorldWideSwarm
 # Supports llama.cpp server with GPT OSS 20b model
 
 set -e
@@ -25,7 +25,7 @@ LLAMACPP_DIR="./llama.cpp"
 
 usage() {
     cat << EOF
-Setup and run local LLM for OpenSwarm
+Setup and run local LLM for WorldWideSwarm
 
 Usage: $0 [command] [--backend ollama|llamacpp]
 
@@ -318,7 +318,7 @@ do_all() {
         echo ""
         echo "Server running on: http://localhost:8080"
         echo ""
-        echo "Now start OpenSwarm with Zeroclaw:"
+        echo "Now start WorldWideSwarm with Zeroclaw:"
         echo "  AGENT_IMPL=zeroclaw LLM_BACKEND=local ./swarm-manager.sh start-agents 15"
     else
         # Default to Ollama (recommended)
@@ -335,7 +335,7 @@ do_all() {
         echo "Server running on: http://localhost:11434"
         echo "Model: $OLLAMA_MODEL"
         echo ""
-        echo "Now start OpenSwarm with Zeroclaw:"
+        echo "Now start WorldWideSwarm with Zeroclaw:"
         echo "  AGENT_IMPL=zeroclaw LLM_BACKEND=ollama ./swarm-manager.sh start-agents 15"
     fi
 }

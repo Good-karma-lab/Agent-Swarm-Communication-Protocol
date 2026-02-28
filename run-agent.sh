@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# OpenSwarm Agent Runner
+# WorldWideSwarm Agent Runner
 # Starts a swarm connector and an AI agent (Claude Code CLI or Zeroclaw) connected to it
 
 set -e
@@ -58,7 +58,7 @@ CONNECTOR_ONLY=false
 
 usage() {
     cat << EOF
-${GREEN}OpenSwarm Agent Runner${NC}
+${GREEN}WorldWideSwarm Agent Runner${NC}
 
 Starts a swarm connector node and an AI agent connected to it.
 
@@ -180,7 +180,7 @@ LOCAL_IP=$(get_local_ip)
 
 # Build the connector if not already built
 if [ ! -f "target/release/wws-connector" ]; then
-    echo -e "${YELLOW}Building OpenSwarm connector...${NC}"
+    echo -e "${YELLOW}Building WorldWideSwarm connector...${NC}"
     cargo build --release
 fi
 
@@ -199,7 +199,7 @@ fi
 # Display connection information
 echo ""
 echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║         OpenSwarm Agent Starting...                       ║${NC}"
+echo -e "${GREEN}║         WorldWideSwarm Agent Starting...                       ║${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "${BLUE}Agent Name:${NC}     $AGENT_NAME"
@@ -298,9 +298,9 @@ fi
 echo ""
 echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
 if [ "$AGENT_IMPL" = "zeroclaw" ]; then
-    echo -e "${GREEN}Starting OpenSwarm Agent (Connector + Zeroclaw)${NC}"
+    echo -e "${GREEN}Starting WorldWideSwarm Agent (Connector + Zeroclaw)${NC}"
 else
-    echo -e "${GREEN}Starting OpenSwarm Agent (Connector + Claude Code CLI)${NC}"
+    echo -e "${GREEN}Starting WorldWideSwarm Agent (Connector + Claude Code CLI)${NC}"
 fi
 echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
 echo ""
@@ -324,7 +324,7 @@ echo ""
 # Claude's instruction: read and follow SKILL.md
 CLAUDE_INSTRUCTION="CRITICAL: You are a LONG-RUNNING AUTONOMOUS AGENT. Run in an INFINITE LOOP until interrupted.
 
-Fetch the OpenSwarm skill documentation using curl (use Bash tool, not Fetch tool):
+Fetch the WorldWideSwarm skill documentation using curl (use Bash tool, not Fetch tool):
 
 curl http://127.0.0.1:$FILES_PORT/SKILL.md
 

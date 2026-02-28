@@ -1,4 +1,4 @@
-# OpenSwarm - Build and Distribution Makefile
+# WorldWideSwarm - Build and Distribution Makefile
 #
 # Usage:
 #   make build         - Build release binary for current platform

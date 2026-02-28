@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# OpenSwarm agent using opencode CLI for LLM reasoning.
+# WorldWideSwarm agent using opencode CLI for LLM reasoning.
 # The shell loop handles polling/RPC; opencode run handles one task at a time.
 #
 # Usage: opencode-agent.sh <agent-name> <rpc-port> <files-port>

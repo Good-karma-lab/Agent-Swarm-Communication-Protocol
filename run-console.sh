@@ -15,7 +15,7 @@ for arg in "$@"; do
     fi
 done
 
-echo "Rebuilding OpenSwarm connector..."
+echo "Rebuilding WorldWideSwarm connector..."
 cargo build --release
 
 cmd=("./target/release/wws-connector" "--console")

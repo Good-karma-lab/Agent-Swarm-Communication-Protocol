@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# OpenSwarm Multi-Node Manager
+# WorldWideSwarm Multi-Node Manager
 # Start, stop, and manage multiple connector instances
 
 set -e
@@ -59,7 +59,7 @@ nobel_agent_name_for_index() {
 
 usage() {
     cat << EOF
-${GREEN}OpenSwarm Multi-Node Manager${NC}
+${GREEN}WorldWideSwarm Multi-Node Manager${NC}
 
 Usage: $0 <command> [options]
 
@@ -119,12 +119,12 @@ init_swarm_dir() {
 start_nodes() {
     local num_nodes=${1:-3}
 
-    echo -e "${GREEN}Starting $num_nodes OpenSwarm nodes...${NC}"
+    echo -e "${GREEN}Starting $num_nodes WorldWideSwarm nodes...${NC}"
     echo ""
 
     # Build the connector if not already built
     if [ ! -f "target/release/wws-connector" ]; then
-        echo -e "${YELLOW}Building OpenSwarm connector...${NC}"
+        echo -e "${YELLOW}Building WorldWideSwarm connector...${NC}"
         cargo build --release
     fi
 
@@ -213,7 +213,7 @@ get_peer_id() {
 stop_nodes() {
     init_swarm_dir
 
-    echo -e "${YELLOW}Stopping all OpenSwarm nodes and agents...${NC}"
+    echo -e "${YELLOW}Stopping all WorldWideSwarm nodes and agents...${NC}"
     echo ""
 
     # Read with updated format (supports both old and new format)
@@ -263,7 +263,7 @@ stop_nodes() {
         rm -f "$SWARM_DIR/operator-web-15.pid"
     fi
 
-    # Safety net: terminate orphaned OpenSwarm processes not present in nodes.txt.
+    # Safety net: terminate orphaned WorldWideSwarm processes not present in nodes.txt.
     local orphan_connectors
     orphan_connectors=$(pgrep -f 'wws-connector' || true)
     if [ -n "$orphan_connectors" ]; then
@@ -298,7 +298,7 @@ show_status() {
     fi
 
     echo -e "${GREEN}╔════════════════════════════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${GREEN}║                           OpenSwarm Nodes Status                                       ║${NC}"
+    echo -e "${GREEN}║                           WorldWideSwarm Nodes Status                                       ║${NC}"
     echo -e "${GREEN}╚════════════════════════════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 
@@ -374,7 +374,7 @@ test_nodes() {
         return
     fi
 
-    echo -e "${GREEN}Testing all OpenSwarm nodes...${NC}"
+    echo -e "${GREEN}Testing all WorldWideSwarm nodes...${NC}"
     echo ""
 
     while IFS='|' read -r name connector_pid claude_pid_or_p2p p2p_port_or_rpc rpc_port_or_files files_port; do
@@ -429,7 +429,7 @@ test_nodes() {
 
 # Clean up
 clean_up() {
-    echo -e "${YELLOW}Cleaning up OpenSwarm temporary files...${NC}"
+    echo -e "${YELLOW}Cleaning up WorldWideSwarm temporary files...${NC}"
 
     # Stop nodes first
     stop_nodes
@@ -452,12 +452,12 @@ clean_up() {
 start_agents() {
     local num_agents=${1:-3}
 
-    echo -e "${GREEN}Starting $num_agents OpenSwarm agents (connector + <Agent>)...${NC}"
+    echo -e "${GREEN}Starting $num_agents WorldWideSwarm agents (connector + <Agent>)...${NC}"
     echo ""
 
     # Build the connector if not already built
     if [ ! -f "target/release/wws-connector" ]; then
-        echo -e "${YELLOW}Building OpenSwarm connector...${NC}"
+        echo -e "${YELLOW}Building WorldWideSwarm connector...${NC}"
         cargo build --release
     fi
 
@@ -582,7 +582,7 @@ start_agents() {
         # Build agent instruction for LLM-based implementations
         local claude_instruction="CRITICAL: You are a LONG-RUNNING AUTONOMOUS AGENT. Run in an INFINITE LOOP until interrupted.
 
-Fetch the OpenSwarm skill documentation using curl (use Bash tool, not Fetch tool):
+Fetch the WorldWideSwarm skill documentation using curl (use Bash tool, not Fetch tool):
 
 curl http://127.0.0.1:$files_port/SKILL.md
 
