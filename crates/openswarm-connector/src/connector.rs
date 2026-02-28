@@ -31,8 +31,8 @@ use crate::tui::{LogCategory, LogEntry};
 const ACTIVE_MEMBER_STALENESS_SECS: u64 = 45;
 const PARTICIPATION_POLL_STALENESS_SECS: u64 = 180;
 const EXECUTION_ASSIGNMENT_TIMEOUT_SECS: i64 = 420;
-const PROPOSAL_STAGE_TIMEOUT_SECS: i64 = 180;
-const VOTING_STAGE_TIMEOUT_SECS: i64 = 180;
+const PROPOSAL_STAGE_TIMEOUT_SECS: i64 = 30;
+const VOTING_STAGE_TIMEOUT_SECS: i64 = 30;
 
 /// Information about a known swarm tracked by this connector.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -978,6 +978,10 @@ impl OpenSwarmConnector {
                     serde_json::from_value::<ProposalCommitParams>(message.params)
                 {
                     let mut state = self.state.write().await;
+                    // A ProposalCommit is proof of activity — mark proposer as active before
+                    // the participation check to avoid KeepAlive propagation race conditions.
+                    state.mark_member_seen(params.proposer.as_str());
+                    state.mark_member_polled_tasks(params.proposer.as_str());
                     if !Self::is_participating_member_for_task(
                         &state,
                         &params.task_id,
@@ -1123,6 +1127,10 @@ impl OpenSwarmConnector {
                     serde_json::from_value::<ProposalRevealParams>(message.params)
                 {
                     let mut state = self.state.write().await;
+                    // A ProposalReveal is proof of activity — mark proposer as active before
+                    // the participation check to avoid KeepAlive propagation race conditions.
+                    state.mark_member_seen(params.plan.proposer.as_str());
+                    state.mark_member_polled_tasks(params.plan.proposer.as_str());
                     if !Self::is_participating_member_for_task(
                         &state,
                         &params.task_id,
@@ -1926,12 +1934,54 @@ impl OpenSwarmConnector {
                     .signed_duration_since(task.created_at)
                     .num_seconds();
                 if age_secs >= PROPOSAL_STAGE_TIMEOUT_SECS {
-                    expected_proposals = expected_proposals.min(proposal_count.max(1));
+                    // Force-advance RFP from CommitPhase if P2P commits didn't arrive in time.
+                    // This ensures the local proposal can proceed to voting even without full quorum.
+                    let pending_reveals = state.pending_plan_reveals.remove(&task_id).unwrap_or_default();
+                    if let Some(rfp) = state.rfp_coordinators.get_mut(&task_id) {
+                        if matches!(rfp.phase(), openswarm_consensus::rfp::RfpPhase::CommitPhase) {
+                            if rfp.commit_count() > 0 {
+                                let _ = rfp.transition_to_reveal();
+                                // Flush any pending reveals that arrived while in CommitPhase
+                                let mut pending_sorted: Vec<(String, openswarm_protocol::Plan)> =
+                                    pending_reveals.into_iter().collect();
+                                pending_sorted.sort_by(|a, b| a.0.cmp(&b.0));
+                                for (_, plan) in pending_sorted {
+                                    let reveal = openswarm_protocol::messages::ProposalRevealParams {
+                                        task_id: task_id.clone(),
+                                        plan,
+                                    };
+                                    let _ = rfp.record_reveal(&reveal);
+                                }
+                            }
+                        }
+                    }
+                    // Re-sync voting engine with proposals now that reveals may have been processed
+                    if let Some(proposal_owners) = state.rfp_coordinators.get(&task_id).map(|rfp| {
+                        rfp.reveals
+                            .values()
+                            .map(|r| (r.plan.plan_id.clone(), r.plan.proposer.clone()))
+                            .collect::<std::collections::HashMap<String, AgentId>>()
+                    }) {
+                        if !proposal_owners.is_empty() {
+                            if let Some(v) = state.voting_engines.get_mut(&task_id) {
+                                v.set_proposals(proposal_owners);
+                            }
+                        }
+                    }
+                    // Recalculate proposal_count after potential forced reveal
+                    let proposal_count_now = state.voting_engines.get(&task_id).map(|v| v.proposal_count()).unwrap_or(0);
+                    expected_proposals = expected_proposals.min(proposal_count_now.max(1));
                 }
                 if age_secs >= VOTING_STAGE_TIMEOUT_SECS {
                     expected_votes = expected_votes.min(ballot_count.max(1));
                 }
             }
+
+            // Recalculate proposal_count (may have changed due to forced reveal above)
+            let (ballot_count, proposal_count) = match state.voting_engines.get(&task_id) {
+                Some(v) => (v.ballot_count(), v.proposal_count()),
+                None => continue,
+            };
 
             // Strict participation gate: all expected tier members must propose and vote.
             let task_age_secs = state
@@ -2251,7 +2301,7 @@ impl OpenSwarmConnector {
         };
 
         // Get my subordinates for assignment
-        let subordinates: Vec<AgentId> = state.subordinates
+        let raw_subordinates: Vec<AgentId> = state.subordinates
             .get(state.agent_id.as_str())
             .cloned()
             .unwrap_or_default()
@@ -2259,10 +2309,41 @@ impl OpenSwarmConnector {
             .map(AgentId::new)
             .collect();
 
-        if subordinates.is_empty() {
-            tracing::warn!(
+        // In single-node mode (swarm_size==1), self-assign so the sole connector executes.
+        // In multi-node mode, Tier1 nodes without subordinates are NOT the designated
+        // coordinator — skip assignment to avoid duplicate assignments from multiple Tier1s.
+        let swarm_size = state.active_member_count(
+            std::time::Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS)
+        ) as usize;
+        let subordinates: Vec<AgentId> = if raw_subordinates.is_empty() {
+            if swarm_size <= 1 {
+                tracing::info!(
+                    task_id = %task_id,
+                    agent_id = %state.agent_id,
+                    "No subordinates (single-node mode): self-assigning subtasks"
+                );
+                vec![state.agent_id.clone()]
+            } else {
+                tracing::info!(
+                    task_id = %task_id,
+                    agent_id = %state.agent_id,
+                    swarm_size,
+                    "No subordinates in multi-node swarm: skipping assignment (not the designated coordinator)"
+                );
+                return Ok(());
+            }
+        } else {
+            raw_subordinates
+        };
+
+        // Idempotency: if subtasks already exist for this task, another coordinator already
+        // assigned them. Skip to avoid competing assignments from multiple Tier1 nodes.
+        let first_subtask_id = format!("{}-st-1", task_id);
+        if state.task_details.contains_key(&first_subtask_id) {
+            tracing::info!(
                 task_id = %task_id,
-                "No subordinates available to assign subtasks"
+                agent_id = %state.agent_id,
+                "Subtasks already assigned by another coordinator — skipping duplicate assignment"
             );
             return Ok(());
         }
@@ -2276,72 +2357,148 @@ impl OpenSwarmConnector {
         let mut subtask_ids = Vec::new();
         let mut assignment_messages = Vec::new();
 
+        const COMPLEXITY_RECURSE_THRESHOLD: f64 = 0.4;
+
         // Create subtasks and assignment messages
         for (idx, subtask_spec) in winning_plan.subtasks.iter().enumerate() {
             let subtask_id = format!("{}-st-{}", task_id, idx + 1);
-            let assignee = subordinates[idx % subordinates.len()].clone();
+            let is_complex = subtask_spec.estimated_complexity > COMPLEXITY_RECURSE_THRESHOLD;
 
-            let subtask = Task {
-                task_id: subtask_id.clone(),
-                parent_task_id: Some(task_id.to_string()),
-                epoch: winning_plan.epoch,
-                status: TaskStatus::InProgress,
-                description: subtask_spec.description.clone(),
-                assigned_to: Some(assignee.clone()),
-                tier_level: (parent_tier + 1).min(openswarm_protocol::MAX_HIERARCHY_DEPTH),
-                subtasks: Vec::new(),
-                created_at: chrono::Utc::now(),
-                deadline: Some(
-                    chrono::Utc::now() + chrono::Duration::seconds(EXECUTION_ASSIGNMENT_TIMEOUT_SECS),
-                ),
-                capabilities_required: subtask_spec.required_capabilities.clone(),
-                ..Default::default()
-            };
+            if is_complex {
+                // High-complexity subtask: spawn a sub-holon via TaskInjection so any
+                // available coordinator forms a new deliberation board for it.
+                let subtask = Task {
+                    task_id: subtask_id.clone(),
+                    parent_task_id: Some(task_id.to_string()),
+                    epoch: winning_plan.epoch,
+                    status: TaskStatus::Pending,
+                    description: subtask_spec.description.clone(),
+                    assigned_to: None,
+                    // Keep at parent tier so coordinator-tier agents pick it up
+                    tier_level: parent_tier,
+                    subtasks: Vec::new(),
+                    created_at: chrono::Utc::now(),
+                    deadline: None,
+                    capabilities_required: subtask_spec.required_capabilities.clone(),
+                    ..Default::default()
+                };
 
-            // Store subtask in state
-            state.task_details.insert(subtask_id.clone(), subtask.clone());
-            state.bump_tasks_assigned(assignee.as_str());
+                state.task_details.insert(subtask_id.clone(), subtask.clone());
+                subtask_ids.push(subtask_id.clone());
 
-            // Log subtask creation
-            state.push_task_timeline_event(
-                task_id,
-                "subtask_assigned",
-                format!("Subtask {} assigned to {}", subtask_id, assignee),
-                Some(assignee.to_string()),
-            );
+                // Create a child HolonState for this sub-holon
+                let my_agent_id = state.agent_id.clone();
+                state.active_holons.entry(subtask_id.clone()).or_insert_with(|| HolonState {
+                    task_id: subtask_id.clone(),
+                    chair: my_agent_id,
+                    members: Vec::new(),
+                    adversarial_critic: None,
+                    depth: parent_tier + 1,
+                    parent_holon: Some(task_id.to_string()),
+                    child_holons: Vec::new(),
+                    subtask_assignments: std::collections::HashMap::new(),
+                    status: HolonStatus::Forming,
+                    created_at: chrono::Utc::now(),
+                });
+                // Register sub-holon in parent's child_holons list
+                if let Some(parent_holon) = state.active_holons.get_mut(task_id) {
+                    if !parent_holon.child_holons.contains(&subtask_id) {
+                        parent_holon.child_holons.push(subtask_id.clone());
+                    }
+                }
 
-            subtask_ids.push(subtask_id.clone());
+                state.push_task_timeline_event(
+                    task_id,
+                    "sub_holon_forming",
+                    format!(
+                        "Sub-holon forming for complex subtask {} (complexity={:.2})",
+                        subtask_id, subtask_spec.estimated_complexity
+                    ),
+                    None,
+                );
 
-            // Create task assignment message
-            let assign_params = TaskAssignmentParams {
-                task: subtask,
-                assignee: assignee.clone(),
-                parent_task_id: task_id.to_string(),
-                winning_plan_id: winner_plan_id.to_string(),
-            };
+                let inject_params = TaskInjectionParams {
+                    task: subtask,
+                    originator: state.agent_id.clone(),
+                };
+                let inject_msg = SwarmMessage::new(
+                    ProtocolMethod::TaskInjection.as_str(),
+                    serde_json::to_value(&inject_params).unwrap_or_default(),
+                    String::new(),
+                );
+                if let Ok(data) = serde_json::to_vec(&inject_msg) {
+                    let topic = SwarmTopics::tasks_for(swarm_id.as_str(), parent_tier);
+                    assignment_messages.push((topic, data));
+                }
 
-            let assign_msg = SwarmMessage::new(
-                ProtocolMethod::TaskAssignment.as_str(),
-                serde_json::to_value(&assign_params).unwrap_or_default(),
-                String::new(),
-            );
+                tracing::info!(
+                    task_id = %task_id,
+                    subtask_id = %subtask_id,
+                    complexity = subtask_spec.estimated_complexity,
+                    "Complex subtask spawning sub-holon via TaskInjection"
+                );
+            } else {
+                // Low-complexity subtask: direct assignment to a subordinate executor
+                let assignee = subordinates[idx % subordinates.len()].clone();
 
-            if let Ok(data) = serde_json::to_vec(&assign_msg) {
-                let topic = SwarmTopics::tasks_for(swarm_id.as_str(), assign_params.task.tier_level);
-                assignment_messages.push((topic, data));
+                let subtask = Task {
+                    task_id: subtask_id.clone(),
+                    parent_task_id: Some(task_id.to_string()),
+                    epoch: winning_plan.epoch,
+                    status: TaskStatus::InProgress,
+                    description: subtask_spec.description.clone(),
+                    assigned_to: Some(assignee.clone()),
+                    tier_level: (parent_tier + 1).min(openswarm_protocol::MAX_HIERARCHY_DEPTH),
+                    subtasks: Vec::new(),
+                    created_at: chrono::Utc::now(),
+                    deadline: Some(
+                        chrono::Utc::now()
+                            + chrono::Duration::seconds(EXECUTION_ASSIGNMENT_TIMEOUT_SECS),
+                    ),
+                    capabilities_required: subtask_spec.required_capabilities.clone(),
+                    ..Default::default()
+                };
+
+                state.task_details.insert(subtask_id.clone(), subtask.clone());
+                state.bump_tasks_assigned(assignee.as_str());
+                subtask_ids.push(subtask_id.clone());
+
+                state.push_task_timeline_event(
+                    task_id,
+                    "subtask_assigned",
+                    format!("Subtask {} assigned to {}", subtask_id, assignee),
+                    Some(assignee.to_string()),
+                );
+
+                let assign_params = TaskAssignmentParams {
+                    task: subtask,
+                    assignee: assignee.clone(),
+                    parent_task_id: task_id.to_string(),
+                    winning_plan_id: winner_plan_id.to_string(),
+                };
+                let assign_msg = SwarmMessage::new(
+                    ProtocolMethod::TaskAssignment.as_str(),
+                    serde_json::to_value(&assign_params).unwrap_or_default(),
+                    String::new(),
+                );
+                if let Ok(data) = serde_json::to_vec(&assign_msg) {
+                    let topic =
+                        SwarmTopics::tasks_for(swarm_id.as_str(), assign_params.task.tier_level);
+                    assignment_messages.push((topic, data));
+                }
+
+                tracing::info!(
+                    task_id = %task_id,
+                    subtask_id = %subtask_id,
+                    assignee = %assignee,
+                    "Subtask assigned to subordinate"
+                );
             }
-
-            tracing::info!(
-                task_id = %task_id,
-                subtask_id = %subtask_id,
-                assignee = %assignee,
-                "Subtask assigned to subordinate"
-            );
         }
 
         // Update parent task with subtask IDs
         if let Some(parent_task) = state.task_details.get_mut(task_id) {
-            parent_task.subtasks = subtask_ids;
+            parent_task.subtasks = subtask_ids.clone();
         }
 
         state.push_log(
@@ -2356,6 +2513,11 @@ impl OpenSwarmConnector {
 
         // Drop the write lock before publishing
         drop(state);
+
+        // Subscribe coordinator to each subtask's result topic so we receive completion updates
+        for st_id in &subtask_ids {
+            self.subscribe_task_flow_topics(swarm_id.as_str(), st_id).await;
+        }
 
         // Publish all assignment messages
         for (topic, data) in assignment_messages {

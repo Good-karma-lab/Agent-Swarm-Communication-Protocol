@@ -109,12 +109,23 @@ impl Default for Task {
 pub struct Plan {
     pub plan_id: String,
     pub task_id: String,
+    /// Set server-side; clients may send empty string.
+    #[serde(default)]
     pub proposer: AgentId,
+    #[serde(default)]
     pub epoch: u64,
     pub subtasks: Vec<PlanSubtask>,
+    #[serde(default)]
     pub rationale: String,
+    #[serde(default = "default_parallelism")]
     pub estimated_parallelism: f64,
+    /// Set server-side; clients may omit.
+    #[serde(default = "chrono::Utc::now")]
     pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+fn default_parallelism() -> f64 {
+    1.0
 }
 
 impl Plan {
@@ -144,16 +155,34 @@ pub struct PlanSubtask {
 /// Result artifact from task execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Artifact {
+    /// Unique artifact ID; generated server-side if empty.
+    #[serde(default)]
     pub artifact_id: String,
+    /// The task this artifact belongs to.
+    #[serde(default)]
     pub task_id: String,
+    /// Producer agent; overwritten server-side.
+    #[serde(default)]
     pub producer: AgentId,
-    /// Content-addressed ID (SHA-256 hash of content)
+    /// Content-addressed ID (SHA-256 hash of content); computed server-side if empty.
+    #[serde(default)]
     pub content_cid: String,
-    /// Merkle hash for verification chain
+    /// Merkle hash for verification chain; computed server-side if empty.
+    #[serde(default)]
     pub merkle_hash: String,
+    #[serde(default = "default_content_type")]
     pub content_type: String,
+    #[serde(default)]
     pub size_bytes: u64,
+    #[serde(default = "chrono::Utc::now")]
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Human-readable content / result text.
+    #[serde(default)]
+    pub content: String,
+}
+
+fn default_content_type() -> String {
+    "text/plain".to_string()
 }
 
 /// Critic evaluation scores for a plan.

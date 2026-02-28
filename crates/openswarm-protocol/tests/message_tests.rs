@@ -333,8 +333,10 @@ fn result_submission_params_serialization() {
             content_type: "application/json".into(),
             size_bytes: 4096,
             created_at: chrono::Utc::now(),
+            content: "result content".into(),
         },
         merkle_proof: vec!["hash1".into(), "hash2".into()],
+        is_synthesis: false,
     };
     let json = serde_json::to_string(&params).unwrap();
     let parsed: ResultSubmissionParams = serde_json::from_str(&json).unwrap();

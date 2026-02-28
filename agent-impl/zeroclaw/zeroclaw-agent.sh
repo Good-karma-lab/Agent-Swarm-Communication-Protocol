@@ -215,33 +215,68 @@ esac
 # Create instructions file
 INSTRUCTIONS_FILE="/tmp/zeroclaw-instructions-${AGENT_NAME}.txt"
 cat > "$INSTRUCTIONS_FILE" << EOF
-OpenSwarm worker: run one cycle and exit.
+ASIP.Connector worker: run one cycle and exit.
 
 Agent: $AGENT_NAME
 RPC: 127.0.0.1:$RPC_PORT
 
 Hard rules:
-- Use shell + nc for all RPC.
+- Use shell + nc for all RPC calls.
 - Never use notification tools (including pushover).
 - Do not ask for confirmation.
 - Do not run your own infinite loop.
+- All JSON must be valid; escape strings carefully.
 
-RPC examples:
-- status:   echo '{"jsonrpc":"2.0","method":"swarm.get_status","params":{},"id":"status","signature":""}' | nc 127.0.0.1 $RPC_PORT
-- receive:  echo '{"jsonrpc":"2.0","method":"swarm.receive_task","params":{},"id":"receive","signature":""}' | nc 127.0.0.1 $RPC_PORT
-- get_task: echo '{"jsonrpc":"2.0","method":"swarm.get_task","params":{"task_id":"..."},"id":"task","signature":""}' | nc 127.0.0.1 $RPC_PORT
+RPC reference:
+- status:        echo '{"jsonrpc":"2.0","method":"swarm.get_status","params":{},"id":"s","signature":""}' | nc -w 10 127.0.0.1 $RPC_PORT
+- receive:       echo '{"jsonrpc":"2.0","method":"swarm.receive_task","params":{},"id":"r","signature":""}' | nc -w 10 127.0.0.1 $RPC_PORT
+- get_task:      echo '{"jsonrpc":"2.0","method":"swarm.get_task","params":{"task_id":"TASK_ID"},"id":"t","signature":""}' | nc -w 10 127.0.0.1 $RPC_PORT
+- get_vote_state:echo '{"jsonrpc":"2.0","method":"swarm.get_voting_state","params":{"task_id":"TASK_ID"},"id":"v","signature":""}' | nc -w 10 127.0.0.1 $RPC_PORT
+- get_board:     echo '{"jsonrpc":"2.0","method":"swarm.get_board_status","params":{},"id":"b","signature":""}' | nc -w 10 127.0.0.1 $RPC_PORT
 
-Workflow for each pending task:
-1) Read task via swarm.get_task.
-2) If your tier is not Executor:
-   - submit one valid plan via swarm.propose_plan
-   - include 3-6 subtasks, rationale, estimated_parallelism, epoch
-   - then call swarm.get_voting_state and submit vote via swarm.submit_vote
-3) If your tier is Executor:
-   - execute the task and produce real text output
-   - submit via swarm.submit_result with artifact + content field
+Determine your role for each pending task:
+- COORDINATOR: task has no assigned_to (or assigned_to is not you) and task is Pending/Deliberating
+- EXECUTOR: task.assigned_to matches your agent_id and task status is InProgress
 
-Finish after this single cycle.
+=== COORDINATOR WORKFLOW ===
+
+Step A - PROPOSE: Submit a decomposition plan via swarm.propose_plan.
+Include 3-6 subtasks, each with estimated_complexity (0.0=trivial, 1.0=very complex).
+Set estimated_complexity > 0.4 for subtasks that themselves require multi-agent deliberation.
+Example:
+  echo '{"jsonrpc":"2.0","method":"swarm.propose_plan","params":{"task_id":"TASK_ID","plan":{"plan_id":"plan-AGENT_NAME-1","proposer":"AGENT_ID","rationale":"...","subtasks":[{"index":0,"description":"...","required_capabilities":[],"estimated_complexity":0.3}],"estimated_parallelism":2,"epoch":1}},"id":"p","signature":""}' | nc -w 10 127.0.0.1 $RPC_PORT
+
+Step B - VOTE: Get all proposals and rank them via swarm.submit_vote.
+First call swarm.get_voting_state to get plan_ids, then vote:
+  echo '{"jsonrpc":"2.0","method":"swarm.submit_vote","params":{"task_id":"TASK_ID","rankings":["plan-id-1","plan-id-2"],"epoch":1},"id":"vt","signature":""}' | nc -w 10 127.0.0.1 $RPC_PORT
+
+Step C - CRITIQUE: Score each proposal on quality dimensions.
+1. Call swarm.get_voting_state to list all plan_ids.
+2. Call swarm.get_board_status to check if you are the adversarial critic:
+   - Parse the JSON to find the holon for your task_id
+   - Check if adversarial_critic field matches your agent_id
+3. For EACH plan_id, score on: feasibility, parallelism, completeness, risk (all 0.0-1.0)
+   - If you ARE the adversarial critic: focus on weaknesses; lower feasibility/completeness for flawed plans
+   - If you are NOT adversarial: score fairly and objectively
+4. Submit via swarm.submit_critique:
+  echo '{"jsonrpc":"2.0","method":"swarm.submit_critique","params":{"task_id":"TASK_ID","round":2,"plan_scores":{"PLAN_ID":{"feasibility":0.8,"parallelism":0.7,"completeness":0.9,"risk":0.2}},"content":"Brief explanation of your scoring rationale"},"id":"cr","signature":""}' | nc -w 10 127.0.0.1 $RPC_PORT
+
+Step D - SYNTHESIS (only when all subtasks complete): When your coordinator task has subtasks
+and all of them have status=Completed, synthesize the results:
+1. Call swarm.get_task for each subtask_id to retrieve results.
+2. Synthesize all results into a unified, coherent answer using the LLM.
+3. Submit the synthesis for the PARENT task via swarm.submit_result with is_synthesis=true:
+  echo '{"jsonrpc":"2.0","method":"swarm.submit_result","params":{"task_id":"PARENT_TASK_ID","artifact":{"artifact_id":"synth-AGENT_NAME","task_id":"PARENT_TASK_ID","producer":"AGENT_ID","content_cid":"sha256:...","merkle_hash":"...","content_type":"text/plain","size_bytes":100,"created_at":"2024-01-01T00:00:00Z"},"content":"SYNTHESIZED RESULT TEXT","is_synthesis":true},"id":"rs","signature":""}' | nc -w 10 127.0.0.1 $RPC_PORT
+
+=== EXECUTOR WORKFLOW ===
+
+When task.assigned_to matches your agent_id:
+1. Read the full task description via swarm.get_task.
+2. Execute the task: produce real, substantive text output.
+3. Submit the result via swarm.submit_result:
+  echo '{"jsonrpc":"2.0","method":"swarm.submit_result","params":{"task_id":"TASK_ID","artifact":{"artifact_id":"result-AGENT_NAME-1","task_id":"TASK_ID","producer":"AGENT_ID","content_cid":"sha256:result","merkle_hash":"abc123","content_type":"text/plain","size_bytes":100,"created_at":"2024-01-01T00:00:00Z"},"content":"YOUR RESULT TEXT HERE"},"id":"sr","signature":""}' | nc -w 10 127.0.0.1 $RPC_PORT
+
+Complete one full cycle (all applicable steps) then stop.
 EOF
 
 echo "Starting Zeroclaw agent: $AGENT_NAME"

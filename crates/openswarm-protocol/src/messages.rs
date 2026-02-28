@@ -169,9 +169,14 @@ pub struct TaskAssignmentParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResultSubmissionParams {
     pub task_id: String,
+    #[serde(default)]
     pub agent_id: AgentId,
     pub artifact: Artifact,
+    #[serde(default)]
     pub merkle_proof: Vec<String>,
+    /// Optional flag: marks result as a coordinator synthesis (not raw execution).
+    #[serde(default)]
+    pub is_synthesis: bool,
 }
 
 /// Verification result from coordinator back to subordinate.

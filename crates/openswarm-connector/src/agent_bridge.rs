@@ -207,6 +207,7 @@ impl AgentBridge {
             content_type: result.content_type.clone(),
             size_bytes: result.content.len() as u64,
             created_at: Utc::now(),
+            content: String::from_utf8_lossy(&result.content).into_owned(),
         }
     }
 

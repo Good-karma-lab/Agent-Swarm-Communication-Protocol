@@ -130,12 +130,14 @@ fn e2e_task_lifecycle_messages() {
         content_type: "application/json".into(),
         size_bytes: 2048,
         created_at: chrono::Utc::now(),
+        content: "analysis result".into(),
     };
     let result_msg = ResultSubmissionParams {
         task_id: task.task_id.clone(),
         agent_id: agent_id.clone(),
         artifact,
         merkle_proof: vec![],
+        is_synthesis: false,
     };
     let result_json = serde_json::to_value(&result_msg).unwrap();
     assert_eq!(result_json["artifact"]["size_bytes"], 2048);

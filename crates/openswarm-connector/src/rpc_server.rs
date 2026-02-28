@@ -144,6 +144,9 @@ async fn process_request(
         "swarm.submit_vote" => {
             handle_submit_vote(request_id, &request.params, state, network_handle).await
         }
+        "swarm.submit_critique" => {
+            handle_submit_critique(request_id, &request.params, state, network_handle).await
+        }
         "swarm.get_voting_state" => handle_get_voting_state(request_id, &request.params, state).await,
         "swarm.submit_result" => {
             handle_submit_result(request_id, &request.params, state, network_handle).await
@@ -200,7 +203,8 @@ async fn handle_submit_vote(
         }
     };
 
-    let rankings: Vec<String> = match params.get("rankings").and_then(|v| v.as_array()) {
+    // Accept either "rankings" or "ranked_plan_ids" as parameter name
+    let rankings: Vec<String> = match params.get("rankings").or_else(|| params.get("ranked_plan_ids")).and_then(|v| v.as_array()) {
         Some(arr) if !arr.is_empty() => arr
             .iter()
             .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -209,7 +213,7 @@ async fn handle_submit_vote(
             return SwarmResponse::error(
                 id,
                 -32602,
-                "Missing or empty 'rankings' parameter".to_string(),
+                "Missing or empty 'rankings' or 'ranked_plan_ids' parameter".to_string(),
             );
         }
     };
@@ -335,6 +339,129 @@ async fn handle_submit_vote(
             "proposal_count": proposal_count,
         }),
     )
+}
+
+/// Handle `swarm.submit_critique` - submit critique scores for proposals after voting.
+///
+/// Agent calls this after voting to score each proposal on feasibility/parallelism/completeness/risk.
+/// Connector records the critique, broadcasts a `discussion.critique` P2P message, and
+/// updates the holon status to Voting.
+async fn handle_submit_critique(
+    id: Option<String>,
+    params: &serde_json::Value,
+    state: &Arc<RwLock<ConnectorState>>,
+    network_handle: &openswarm_network::SwarmHandle,
+) -> SwarmResponse {
+    let task_id = match params.get("task_id").and_then(|v| v.as_str()) {
+        Some(v) if !v.is_empty() => v.to_string(),
+        _ => {
+            return SwarmResponse::error(id, -32602, "Missing 'task_id' parameter".to_string());
+        }
+    };
+
+    let content = params
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let round = params
+        .get("round")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(2) as u32;
+
+    let plan_scores: std::collections::HashMap<String, CriticScore> = match params
+        .get("plan_scores")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+    {
+        Some(scores) => scores,
+        None => {
+            return SwarmResponse::error(
+                id,
+                -32602,
+                "Missing or invalid 'plan_scores' parameter".to_string(),
+            );
+        }
+    };
+
+    let (voter, swarm_id) = {
+        let mut state = state.write().await;
+        let voter = state.agent_id.clone();
+
+        // Record critique in RFP coordinator (transition to CritiquePhase first if needed)
+        if let Some(rfp) = state.rfp_coordinators.get_mut(&task_id) {
+            let _ = rfp.transition_to_critique();
+            let _ = rfp.record_critique(voter.clone(), plan_scores.clone(), content.clone());
+        }
+
+        // Store as a CritiqueFeedback DeliberationMessage
+        let msg = DeliberationMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            task_id: task_id.clone(),
+            timestamp: chrono::Utc::now(),
+            speaker: voter.clone(),
+            round,
+            message_type: DeliberationType::CritiqueFeedback,
+            content: content.clone(),
+            referenced_plan_id: None,
+            critic_scores: Some(plan_scores.clone()),
+        };
+        state
+            .deliberation_messages
+            .entry(task_id.clone())
+            .or_default()
+            .push(msg);
+
+        // Advance holon status to Voting once critique phase begins
+        if let Some(holon) = state.active_holons.get_mut(&task_id) {
+            if matches!(
+                holon.status,
+                HolonStatus::Forming | HolonStatus::Deliberating
+            ) {
+                holon.status = HolonStatus::Voting;
+            }
+        }
+
+        state.push_task_timeline_event(
+            &task_id,
+            "critique_submitted",
+            format!(
+                "Critique submitted for {} proposals by {}",
+                plan_scores.len(),
+                voter
+            ),
+            Some(voter.to_string()),
+        );
+        state.push_log(
+            crate::tui::LogCategory::Vote,
+            format!(
+                "Critique submitted for task {} by {} ({} plans scored)",
+                task_id, voter, plan_scores.len()
+            ),
+        );
+
+        (voter, state.current_swarm_id.as_str().to_string())
+    };
+
+    // Broadcast discussion.critique P2P message so all board members receive it
+    let critique_params = DiscussionCritiqueParams {
+        task_id: task_id.clone(),
+        voter_id: voter.clone(),
+        round,
+        plan_scores,
+        content,
+    };
+    let msg = SwarmMessage::new(
+        ProtocolMethod::DiscussionCritique.as_str(),
+        serde_json::to_value(&critique_params).unwrap_or_default(),
+        String::new(),
+    );
+    if let Ok(data) = serde_json::to_vec(&msg) {
+        let topic = SwarmTopics::voting_for(&swarm_id, &task_id);
+        let _ = network_handle.publish(&topic, data).await;
+    }
+
+    SwarmResponse::success(id, serde_json::json!({ "ok": true, "task_id": task_id }))
 }
 
 /// Handle `swarm.get_voting_state` - inspect voting and proposal state.
@@ -891,6 +1018,7 @@ fn aggregate_subtask_results(state: &ConnectorState, parent_task_id: &str) -> Ar
         content_type: "application/json; aggregated".to_string(),
         size_bytes: aggregated_content.len() as u64,
         created_at: chrono::Utc::now(),
+        content: aggregated_content,
     }
 }
 
@@ -923,7 +1051,15 @@ pub(crate) async fn handle_submit_result(
         let mut state = state.write().await;
 
         if let Some(task) = state.task_details.get(&submission.task_id) {
-            if task.assigned_to.as_ref() != Some(&submission.agent_id) {
+            // Allow submission when:
+            //  (a) task is assigned to this agent, OR
+            //  (b) task has no assignee (root/coordinator task) — connector synthesizes on behalf
+            //  (c) is_synthesis=true — coordinator synthesizing subtask results (any agent allowed)
+            let is_synthesis = params.get("is_synthesis").and_then(|v| v.as_bool()).unwrap_or(false);
+            let assignee_ok = is_synthesis
+                || task.assigned_to.is_none()
+                || task.assigned_to.as_ref() == Some(&submission.agent_id);
+            if !assignee_ok {
                 return SwarmResponse::error(
                     id,
                     -32012,
@@ -1009,12 +1145,40 @@ pub(crate) async fn handle_submit_result(
 
         // Store the result for potential aggregation
         state.task_results.insert(submission.task_id.clone(), submission.artifact.clone());
-        if let Some(content) = params.get("content").and_then(|v| v.as_str()) {
-            if !content.trim().is_empty() {
-                state
-                    .task_result_text
-                    .insert(submission.task_id.clone(), content.to_string());
-            }
+        let content_text = params
+            .get("content")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if !content_text.trim().is_empty() {
+            state
+                .task_result_text
+                .insert(submission.task_id.clone(), content_text.clone());
+        }
+
+        // If is_synthesis flag is set, record a SynthesisResult deliberation message
+        // so it appears in the deliberation panel alongside critiques and proposals.
+        if params
+            .get("is_synthesis")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            let synth_msg = DeliberationMessage {
+                id: uuid::Uuid::new_v4().to_string(),
+                task_id: submission.task_id.clone(),
+                timestamp: chrono::Utc::now(),
+                speaker: submission.agent_id.clone(),
+                round: 3,
+                message_type: DeliberationType::SynthesisResult,
+                content: content_text.clone(),
+                referenced_plan_id: None,
+                critic_scores: None,
+            };
+            state
+                .deliberation_messages
+                .entry(submission.task_id.clone())
+                .or_default()
+                .push(synth_msg);
         }
 
         let propagation_info = if let Some(parent_id) = parent_task_id {
@@ -1111,6 +1275,7 @@ pub(crate) async fn handle_submit_result(
             agent_id: my_agent_id.clone(),
             artifact: aggregated_artifact,
             merkle_proof: vec![], // TODO: proper merkle proof
+            is_synthesis: true,
         };
 
         // Recursively call handle_submit_result for the parent task
@@ -1699,6 +1864,10 @@ pub(crate) async fn handle_inject_task(
     let mut state_guard = state.write().await;
     let epoch = state_guard.epoch_manager.current_epoch();
     let mut task = openswarm_protocol::Task::new(description.clone(), 1, epoch);
+    // Accept an optional pre-specified task_id (for multi-node injection with same ID)
+    if let Some(v) = params.get("task_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+        task.task_id = v.to_string();
+    }
     // Accept extended holonic task fields if provided
     if let Some(v) = params.get("task_type").and_then(|v| v.as_str()) {
         task.task_type = v.to_string();
