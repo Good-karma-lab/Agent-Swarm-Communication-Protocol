@@ -5,9 +5,9 @@
 //! - Recursion stops at atomic tasks or bottom tier
 //! - Prime Orchestrator role assignment
 
-use openswarm_consensus::cascade::{CascadeEngine, StopCondition};
-use openswarm_protocol::types::{Plan, PlanSubtask};
-use openswarm_protocol::identity::AgentId;
+use wws_consensus::cascade::{CascadeEngine, StopCondition};
+use wws_protocol::types::{Plan, PlanSubtask};
+use wws_protocol::identity::AgentId;
 
 // ═══════════════════════════════════════════════════════════════
 // § 6.5 Recursive Decomposition

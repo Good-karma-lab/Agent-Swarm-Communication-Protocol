@@ -17,7 +17,7 @@
 
 use std::cmp;
 
-use openswarm_protocol::DEFAULT_BRANCHING_FACTOR;
+use wws_protocol::DEFAULT_BRANCHING_FACTOR;
 
 // ═══════════════════════════════════════════════════════════════
 // Static GranularityEngine (used by tests and protocol layer)

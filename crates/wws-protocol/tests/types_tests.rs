@@ -8,8 +8,8 @@
 //! - Epoch tracking
 //! - NetworkStats structure
 
-use openswarm_protocol::types::*;
-use openswarm_protocol::identity::AgentId;
+use wws_protocol::types::*;
+use wws_protocol::identity::AgentId;
 
 // ═══════════════════════════════════════════════════════════════
 // § 6.2 Task
@@ -420,27 +420,27 @@ fn ranked_vote_serialization() {
 
 #[test]
 fn default_branching_factor_is_10() {
-    assert_eq!(openswarm_protocol::constants::DEFAULT_BRANCHING_FACTOR, 10);
+    assert_eq!(wws_protocol::constants::DEFAULT_BRANCHING_FACTOR, 10);
 }
 
 #[test]
 fn leader_timeout_is_30_seconds() {
-    assert_eq!(openswarm_protocol::constants::LEADER_TIMEOUT_SECS, 30);
+    assert_eq!(wws_protocol::constants::LEADER_TIMEOUT_SECS, 30);
 }
 
 #[test]
 fn keepalive_interval_is_10_seconds() {
-    assert_eq!(openswarm_protocol::constants::KEEPALIVE_INTERVAL_SECS, 10);
+    assert_eq!(wws_protocol::constants::KEEPALIVE_INTERVAL_SECS, 10);
 }
 
 #[test]
 fn pow_difficulty_is_16() {
-    assert_eq!(openswarm_protocol::constants::POW_DIFFICULTY, 16);
+    assert_eq!(wws_protocol::constants::POW_DIFFICULTY, 16);
 }
 
 #[test]
 fn protocol_version_format() {
-    let v = openswarm_protocol::constants::PROTOCOL_VERSION;
+    let v = wws_protocol::constants::PROTOCOL_VERSION;
     assert!(v.starts_with("/openswarm/"));
     assert!(v.contains("openswarm"));
 }

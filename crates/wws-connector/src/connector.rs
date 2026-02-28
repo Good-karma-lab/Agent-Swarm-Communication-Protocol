@@ -9,21 +9,21 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, RwLock};
 
-use openswarm_consensus::{CascadeEngine, RfpCoordinator, VotingEngine};
-use openswarm_hierarchy::{
+use wws_consensus::{CascadeEngine, RfpCoordinator, VotingEngine};
+use wws_hierarchy::{
     EpochManager, GeoCluster, PyramidAllocator, SuccessionManager,
     elections::ElectionManager,
     epoch::EpochConfig,
     pyramid::PyramidConfig,
 };
-use openswarm_network::{
+use wws_network::{
     Multiaddr, PeerId,
     NetworkEvent, SwarmHandle, SwarmHost, SwarmHostConfig,
     discovery::DiscoveryConfig,
     transport::TransportConfig,
 };
-use openswarm_protocol::*;
-use openswarm_state::{ContentStore, GranularityAlgorithm, MerkleDag, OrSet};
+use wws_protocol::*;
+use wws_state::{ContentStore, GranularityAlgorithm, MerkleDag, OrSet};
 
 use crate::config::ConnectorConfig;
 use crate::tui::{LogCategory, LogEntry};
@@ -165,7 +165,7 @@ pub struct ConnectorState {
     /// Maps agent_id -> parent agent_id (for Tier-2+ agents).
     pub agent_parents: std::collections::HashMap<String, String>,
     /// Current pyramid layout (recomputed on swarm size changes).
-    pub current_layout: Option<openswarm_hierarchy::pyramid::PyramidLayout>,
+    pub current_layout: Option<wws_hierarchy::pyramid::PyramidLayout>,
     /// Tracks subordinates for each coordinator: parent_id -> [child_ids].
     pub subordinates: std::collections::HashMap<String, Vec<String>>,
     /// Stores task results (artifacts) keyed by task_id.
@@ -518,7 +518,7 @@ impl OpenSwarmConnector {
         // Subscribe to our swarm's topics (if not the default public swarm,
         // since core topics already include the public swarm).
         let swarm_id_str = self.config.swarm.swarm_id.clone();
-        if swarm_id_str != openswarm_protocol::DEFAULT_SWARM_ID {
+        if swarm_id_str != wws_protocol::DEFAULT_SWARM_ID {
             self.network_handle
                 .subscribe_swarm_topics(&swarm_id_str)
                 .await?;
@@ -659,7 +659,7 @@ impl OpenSwarmConnector {
         &self,
         topic: &str,
         data: &[u8],
-        source: openswarm_network::PeerId,
+        source: wws_network::PeerId,
     ) {
         let message: SwarmMessage = match serde_json::from_slice(data) {
             Ok(m) => m,
@@ -1033,12 +1033,12 @@ impl OpenSwarmConnector {
                                     requirement.expected_proposers,
                                 )
                             });
-                        if matches!(rfp.phase(), openswarm_consensus::rfp::RfpPhase::Idle) {
+                        if matches!(rfp.phase(), wws_consensus::rfp::RfpPhase::Idle) {
                             let _ = rfp.inject_task(&injected_task);
                         }
                         if let Err(e) = rfp.record_commit(&params) {
                             tracing::warn!(error = %e, "Failed to record proposal commit");
-                        } else if matches!(rfp.phase(), openswarm_consensus::rfp::RfpPhase::CommitPhase) {
+                        } else if matches!(rfp.phase(), wws_consensus::rfp::RfpPhase::CommitPhase) {
                             let _ = rfp.transition_to_reveal();
                         }
                     }
@@ -1046,7 +1046,7 @@ impl OpenSwarmConnector {
                     let flush_pending = state
                         .rfp_coordinators
                         .get(&params.task_id)
-                        .map(|rfp| matches!(rfp.phase(), openswarm_consensus::rfp::RfpPhase::RevealPhase))
+                        .map(|rfp| matches!(rfp.phase(), wws_consensus::rfp::RfpPhase::RevealPhase))
                         .unwrap_or(false);
 
                     if flush_pending {
@@ -1089,7 +1089,7 @@ impl OpenSwarmConnector {
                     if !proposal_owners.is_empty() {
                         let voting = state.voting_engines.entry(params.task_id.clone()).or_insert_with(|| {
                             VotingEngine::new(
-                                openswarm_consensus::voting::VotingConfig::default(),
+                                wws_consensus::voting::VotingConfig::default(),
                                 params.task_id.clone(),
                                 params.epoch,
                             )
@@ -1190,13 +1190,13 @@ impl OpenSwarmConnector {
                                     requirement.expected_proposers,
                                 )
                             });
-                        if matches!(rfp.phase(), openswarm_consensus::rfp::RfpPhase::Idle) {
+                        if matches!(rfp.phase(), wws_consensus::rfp::RfpPhase::Idle) {
                             let _ = rfp.inject_task(&injected_task);
                         }
                         if matches!(
                             rfp.phase(),
-                            openswarm_consensus::rfp::RfpPhase::RevealPhase
-                                | openswarm_consensus::rfp::RfpPhase::ReadyForVoting
+                            wws_consensus::rfp::RfpPhase::RevealPhase
+                                | wws_consensus::rfp::RfpPhase::ReadyForVoting
                         ) {
                             if let Err(e) = rfp.record_reveal(&params) {
                                 tracing::warn!(error = %e, "Failed to record proposal reveal");
@@ -1228,7 +1228,7 @@ impl OpenSwarmConnector {
 
                     let voting = state.voting_engines.entry(params.task_id.clone()).or_insert_with(|| {
                         VotingEngine::new(
-                            openswarm_consensus::voting::VotingConfig::default(),
+                            wws_consensus::voting::VotingConfig::default(),
                             params.task_id.clone(),
                             params.plan.epoch,
                         )
@@ -1773,7 +1773,7 @@ impl OpenSwarmConnector {
         // Also register in DHT for internet-wide discovery.
         let dht_key = format!(
             "{}{}",
-            openswarm_protocol::SWARM_REGISTRY_PREFIX,
+            wws_protocol::SWARM_REGISTRY_PREFIX,
             params.swarm_id
         );
         let dht_value = serde_json::json!({
@@ -1860,7 +1860,7 @@ impl OpenSwarmConnector {
         state.network_stats.total_agents = state.active_member_count(stale_ttl) as u64;
         if let Some(action) = state.epoch_manager.tick(swarm_size) {
             match action {
-                openswarm_hierarchy::epoch::EpochAction::TriggerElection {
+                wws_hierarchy::epoch::EpochAction::TriggerElection {
                     new_epoch,
                     estimated_swarm_size,
                 } => {
@@ -1874,7 +1874,7 @@ impl OpenSwarmConnector {
                         state.network_stats.hierarchy_depth = layout.depth;
                     }
                     // Initialize election for new epoch.
-                    let election_config = openswarm_hierarchy::elections::ElectionConfig::default();
+                    let election_config = wws_hierarchy::elections::ElectionConfig::default();
                     state.election = Some(ElectionManager::new(election_config, new_epoch));
                     state.status = ConnectorStatus::InElection;
                     state.push_log(
@@ -1882,7 +1882,7 @@ impl OpenSwarmConnector {
                         format!("Epoch {} election triggered (swarm size: {})", new_epoch, estimated_swarm_size),
                     );
                 }
-                openswarm_hierarchy::epoch::EpochAction::FinalizeTransition { epoch } => {
+                wws_hierarchy::epoch::EpochAction::FinalizeTransition { epoch } => {
                     tracing::info!(epoch, "Finalizing epoch transition");
                     // In production, this would tally votes and advance the epoch.
                     state.status = ConnectorStatus::Running;
@@ -1946,15 +1946,15 @@ impl OpenSwarmConnector {
                     // This ensures the local proposal can proceed to voting even without full quorum.
                     let pending_reveals = state.pending_plan_reveals.remove(&task_id).unwrap_or_default();
                     if let Some(rfp) = state.rfp_coordinators.get_mut(&task_id) {
-                        if matches!(rfp.phase(), openswarm_consensus::rfp::RfpPhase::CommitPhase) {
+                        if matches!(rfp.phase(), wws_consensus::rfp::RfpPhase::CommitPhase) {
                             if rfp.commit_count() > 0 {
                                 let _ = rfp.transition_to_reveal();
                                 // Flush any pending reveals that arrived while in CommitPhase
-                                let mut pending_sorted: Vec<(String, openswarm_protocol::Plan)> =
+                                let mut pending_sorted: Vec<(String, wws_protocol::Plan)> =
                                     pending_reveals.into_iter().collect();
                                 pending_sorted.sort_by(|a, b| a.0.cmp(&b.0));
                                 for (_, plan) in pending_sorted {
-                                    let reveal = openswarm_protocol::messages::ProposalRevealParams {
+                                    let reveal = wws_protocol::messages::ProposalRevealParams {
                                         task_id: task_id.clone(),
                                         plan,
                                     };
@@ -2456,7 +2456,7 @@ impl OpenSwarmConnector {
                     status: TaskStatus::InProgress,
                     description: subtask_spec.description.clone(),
                     assigned_to: Some(assignee.clone()),
-                    tier_level: (parent_tier + 1).min(openswarm_protocol::MAX_HIERARCHY_DEPTH),
+                    tier_level: (parent_tier + 1).min(wws_protocol::MAX_HIERARCHY_DEPTH),
                     subtasks: Vec::new(),
                     created_at: chrono::Utc::now(),
                     deadline: Some(
@@ -2637,7 +2637,7 @@ impl OpenSwarmConnector {
     }
 
     async fn subscribe_task_assignment_topics(&self, swarm_id: &str) {
-        for tier in 1..=openswarm_protocol::MAX_HIERARCHY_DEPTH {
+        for tier in 1..=wws_protocol::MAX_HIERARCHY_DEPTH {
             let topic = SwarmTopics::tasks_for(swarm_id, tier);
             if let Err(e) = self.network_handle.subscribe(&topic).await {
                 tracing::debug!(error = %e, topic = %topic, "Failed to subscribe task assignment topic");
@@ -2675,7 +2675,7 @@ impl OpenSwarmConnector {
         state.subordinates.clear();
 
         let k = Self::dynamic_branching_factor(swarm_size) as usize;
-        let distribution = openswarm_hierarchy::PyramidAllocator::distribute(swarm_size, k as u64);
+        let distribution = wws_hierarchy::PyramidAllocator::distribute(swarm_size, k as u64);
         let tier_sizes: Vec<usize> = distribution.tiers.iter().map(|n| *n as usize).collect();
         let levels = tier_sizes.len().max(1);
 
@@ -2741,9 +2741,9 @@ impl OpenSwarmConnector {
 
         state.network_stats.hierarchy_depth = levels as u32;
         state.network_stats.total_agents = swarm_size;
-        state.current_layout = openswarm_hierarchy::PyramidAllocator::new(PyramidConfig {
+        state.current_layout = wws_hierarchy::PyramidAllocator::new(PyramidConfig {
             branching_factor: k as u32,
-            max_depth: openswarm_protocol::MAX_HIERARCHY_DEPTH,
+            max_depth: wws_protocol::MAX_HIERARCHY_DEPTH,
         })
         .compute_layout(swarm_size)
         .ok();

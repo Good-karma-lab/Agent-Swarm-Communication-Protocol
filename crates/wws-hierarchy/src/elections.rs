@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use openswarm_protocol::{AgentId, CandidacyParams, ElectionVoteParams, NodeScore};
+use wws_protocol::{AgentId, CandidacyParams, ElectionVoteParams, NodeScore};
 
 use crate::HierarchyError;
 
@@ -313,7 +313,7 @@ impl ElectionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openswarm_protocol::VivaldiCoordinates;
+    use wws_protocol::VivaldiCoordinates;
 
     fn make_score(agent: &str, reputation: f64, uptime: f64) -> NodeScore {
         NodeScore {

@@ -9,9 +9,9 @@
 
 use std::collections::HashMap;
 
-use openswarm_consensus::voting::{VotingConfig, VotingEngine};
-use openswarm_consensus::ConsensusError;
-use openswarm_protocol::{AgentId, CriticScore, RankedVote};
+use wws_consensus::voting::{VotingConfig, VotingEngine};
+use wws_consensus::ConsensusError;
+use wws_protocol::{AgentId, CriticScore, RankedVote};
 
 // -----------------------------------------------------------------------
 // Helpers

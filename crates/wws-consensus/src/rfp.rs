@@ -20,7 +20,7 @@ use std::pin::Pin;
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 
-use openswarm_protocol::{
+use wws_protocol::{
     AgentId, CriticScore, Plan, ProposalCommitParams, ProposalRevealParams, Task,
     COMMIT_REVEAL_TIMEOUT_SECS,
 };
@@ -466,7 +466,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openswarm_protocol::PlanSubtask;
+    use wws_protocol::PlanSubtask;
 
     fn make_plan(task_id: &str, proposer: &str, epoch: u64) -> Plan {
         let mut plan = Plan::new(

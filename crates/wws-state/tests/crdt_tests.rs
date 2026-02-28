@@ -6,7 +6,7 @@
 //! - Merge of divergent replicas
 //! - Idempotent merge operations
 
-use openswarm_state::crdt::OrSet;
+use wws_state::crdt::OrSet;
 
 // ═══════════════════════════════════════════════════════════════
 // § 8.1.2 OR-Set CRDT Operations

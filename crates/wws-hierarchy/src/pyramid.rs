@@ -10,7 +10,7 @@
 //! - Each tier-t node oversees k tier-(t+1) nodes
 //! - Executors are at the leaf level (tier D)
 
-use openswarm_protocol::{Tier, MAX_HIERARCHY_DEPTH};
+use wws_protocol::{Tier, MAX_HIERARCHY_DEPTH};
 
 use crate::HierarchyError;
 
@@ -26,7 +26,7 @@ pub struct PyramidConfig {
 impl Default for PyramidConfig {
     fn default() -> Self {
         Self {
-            branching_factor: openswarm_protocol::DEFAULT_BRANCHING_FACTOR,
+            branching_factor: wws_protocol::DEFAULT_BRANCHING_FACTOR,
             max_depth: MAX_HIERARCHY_DEPTH,
         }
     }

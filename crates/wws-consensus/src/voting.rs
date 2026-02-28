@@ -16,7 +16,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use openswarm_protocol::{AgentId, CriticScore, RankedVote};
+use wws_protocol::{AgentId, CriticScore, RankedVote};
 use rand::seq::SliceRandom;
 
 use crate::ConsensusError;
@@ -96,7 +96,7 @@ pub struct VotingEngine {
     /// Whether voting has been finalized.
     finalized: bool,
     /// IRV round history (populated after run_irv()).
-    pub irv_rounds: Vec<openswarm_protocol::IrvRound>,
+    pub irv_rounds: Vec<wws_protocol::IrvRound>,
 }
 
 impl VotingEngine {
@@ -295,7 +295,7 @@ impl VotingEngine {
             {
                 if count >= majority_threshold || tallies.len() == 1 {
                     // Record final round (no elimination).
-                    self.irv_rounds.push(openswarm_protocol::IrvRound {
+                    self.irv_rounds.push(wws_protocol::IrvRound {
                         task_id: self.task_id.clone(),
                         round_number: round as u32,
                         tallies: tallies.clone(),
@@ -334,7 +334,7 @@ impl VotingEngine {
                 .filter(|k| k.as_str() != to_eliminate.as_str())
                 .cloned()
                 .collect();
-            self.irv_rounds.push(openswarm_protocol::IrvRound {
+            self.irv_rounds.push(wws_protocol::IrvRound {
                 task_id: self.task_id.clone(),
                 round_number: round as u32,
                 tallies: tallies.clone(),
@@ -355,7 +355,7 @@ impl VotingEngine {
     }
 
     /// Get IRV round history (populated after run_irv).
-    pub fn irv_rounds(&self) -> &[openswarm_protocol::IrvRound] {
+    pub fn irv_rounds(&self) -> &[wws_protocol::IrvRound] {
         &self.irv_rounds
     }
 
@@ -632,7 +632,7 @@ mod tests {
         engine.set_proposals(proposals);
 
         let mut vote = make_vote("voter1", "task-json", 1, vec!["planA", "planB"]);
-        vote.critic_scores.insert("planA".to_string(), openswarm_protocol::CriticScore {
+        vote.critic_scores.insert("planA".to_string(), wws_protocol::CriticScore {
             feasibility: 0.9,
             parallelism: 0.8,
             completeness: 0.85,
@@ -663,7 +663,7 @@ mod tests {
 
         // Both voters prefer planA and provide critic scores
         let mut vote1 = make_vote("v1", "task-critic", 1, vec!["planA", "planB"]);
-        vote1.critic_scores.insert("planA".to_string(), openswarm_protocol::CriticScore {
+        vote1.critic_scores.insert("planA".to_string(), wws_protocol::CriticScore {
             feasibility: 0.8,
             parallelism: 0.7,
             completeness: 0.9,
@@ -671,7 +671,7 @@ mod tests {
         });
 
         let mut vote2 = make_vote("v2", "task-critic", 1, vec!["planA", "planB"]);
-        vote2.critic_scores.insert("planA".to_string(), openswarm_protocol::CriticScore {
+        vote2.critic_scores.insert("planA".to_string(), wws_protocol::CriticScore {
             feasibility: 0.6,
             parallelism: 0.9,
             completeness: 0.8,

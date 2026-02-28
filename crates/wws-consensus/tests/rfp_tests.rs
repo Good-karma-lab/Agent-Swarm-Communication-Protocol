@@ -8,9 +8,9 @@
 //! - Multiple proposers
 //! - Edge cases: reveal without commit, finalize with no reveals
 
-use openswarm_consensus::rfp::{RfpCoordinator, RfpPhase};
-use openswarm_consensus::ConsensusError;
-use openswarm_protocol::{AgentId, Plan, PlanSubtask, ProposalCommitParams, ProposalRevealParams, Task};
+use wws_consensus::rfp::{RfpCoordinator, RfpPhase};
+use wws_consensus::ConsensusError;
+use wws_protocol::{AgentId, Plan, PlanSubtask, ProposalCommitParams, ProposalRevealParams, Task};
 
 // -----------------------------------------------------------------------
 // Helpers

@@ -5,7 +5,7 @@
 //! - Content retrieval by CID
 //! - Provider record publishing
 
-use openswarm_state::content_store::ContentStore;
+use wws_state::content_store::ContentStore;
 
 // ═══════════════════════════════════════════════════════════════
 // § 8.2 Content-Addressed Storage

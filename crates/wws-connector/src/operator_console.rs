@@ -27,7 +27,7 @@ use tokio::sync::RwLock;
 
 use crate::connector::{ConnectorState, ConnectorStatus};
 use crate::tui::{LogCategory, LogEntry};
-use openswarm_protocol::{
+use wws_protocol::{
     ProtocolMethod, SwarmMessage, SwarmTopics, Task, TaskInjectionParams, TaskStatus, Tier,
 };
 
@@ -87,7 +87,7 @@ struct TaskView {
 /// The operator console TUI state.
 struct OperatorConsole {
     state: Arc<RwLock<ConnectorState>>,
-    network_handle: openswarm_network::SwarmHandle,
+    network_handle: wws_network::SwarmHandle,
     /// Current text in the input field.
     input: String,
     /// Cursor position within the input field.
@@ -108,7 +108,7 @@ struct OperatorConsole {
 impl OperatorConsole {
     fn new(
         state: Arc<RwLock<ConnectorState>>,
-        network_handle: openswarm_network::SwarmHandle,
+        network_handle: wws_network::SwarmHandle,
     ) -> Self {
         let mut console_messages = Vec::new();
         console_messages.push((
@@ -1239,7 +1239,7 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Re
 /// - Use slash commands for additional operations
 pub async fn run_operator_console(
     state: Arc<RwLock<ConnectorState>>,
-    network_handle: openswarm_network::SwarmHandle,
+    network_handle: wws_network::SwarmHandle,
 ) -> Result<(), anyhow::Error> {
     use std::io::IsTerminal;
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
@@ -1297,19 +1297,19 @@ pub async fn run_operator_console(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openswarm_network::{
+    use wws_network::{
         NetworkEvent, SwarmHost, SwarmHostConfig, discovery::DiscoveryConfig,
         transport::TransportConfig,
     };
-    use openswarm_protocol::SwarmTopics;
+    use wws_protocol::SwarmTopics;
     use std::time::Duration;
     use tokio::time::timeout;
 
     #[test]
     fn hierarchy_building_shows_only_known_agents() {
-        use openswarm_hierarchy::{EpochManager, GeoCluster, PyramidAllocator, SuccessionManager};
-        use openswarm_protocol::{AgentId, SwarmId, Tier};
-        use openswarm_state::{ContentStore, GranularityAlgorithm, MerkleDag, OrSet};
+        use wws_hierarchy::{EpochManager, GeoCluster, PyramidAllocator, SuccessionManager};
+        use wws_protocol::{AgentId, SwarmId, Tier};
+        use wws_state::{ContentStore, GranularityAlgorithm, MerkleDag, OrSet};
 
         let mut state = ConnectorState {
             agent_id: AgentId::new("did:swarm:connector-self".to_string()),
@@ -1321,7 +1321,7 @@ mod tests {
             succession: SuccessionManager::new(),
             rfp_coordinators: std::collections::HashMap::new(),
             voting_engines: std::collections::HashMap::new(),
-            cascade: openswarm_consensus::CascadeEngine::new(),
+            cascade: wws_consensus::CascadeEngine::new(),
             task_set: OrSet::new("seed".to_string()),
             task_details: std::collections::HashMap::new(),
             task_timelines: std::collections::HashMap::new(),
@@ -1345,7 +1345,7 @@ mod tests {
             current_layout: None,
             subordinates: std::collections::HashMap::new(),
             task_results: std::collections::HashMap::new(),
-            network_stats: openswarm_protocol::NetworkStats {
+            network_stats: wws_protocol::NetworkStats {
                 total_agents: 0,
                 hierarchy_depth: 1,
                 branching_factor: 10,
@@ -1381,9 +1381,9 @@ mod tests {
 
     #[test]
     fn flow_summary_counts_votes_decomposition_results() {
-        use openswarm_hierarchy::{EpochManager, GeoCluster, PyramidAllocator, SuccessionManager};
-        use openswarm_protocol::{AgentId, SwarmId, Tier};
-        use openswarm_state::{ContentStore, GranularityAlgorithm, MerkleDag, OrSet};
+        use wws_hierarchy::{EpochManager, GeoCluster, PyramidAllocator, SuccessionManager};
+        use wws_protocol::{AgentId, SwarmId, Tier};
+        use wws_state::{ContentStore, GranularityAlgorithm, MerkleDag, OrSet};
 
         let mut state = ConnectorState {
             agent_id: AgentId::new("did:swarm:flow-test".to_string()),
@@ -1395,7 +1395,7 @@ mod tests {
             succession: SuccessionManager::new(),
             rfp_coordinators: std::collections::HashMap::new(),
             voting_engines: std::collections::HashMap::new(),
-            cascade: openswarm_consensus::CascadeEngine::new(),
+            cascade: wws_consensus::CascadeEngine::new(),
             task_set: OrSet::new("seed".to_string()),
             task_details: std::collections::HashMap::new(),
             task_timelines: std::collections::HashMap::new(),
@@ -1419,7 +1419,7 @@ mod tests {
             current_layout: None,
             subordinates: std::collections::HashMap::new(),
             task_results: std::collections::HashMap::new(),
-            network_stats: openswarm_protocol::NetworkStats {
+            network_stats: wws_protocol::NetworkStats {
                 total_agents: 1,
                 hierarchy_depth: 1,
                 branching_factor: 10,
@@ -1518,9 +1518,9 @@ mod tests {
             .expect("subscribe B task topic");
         tokio::time::sleep(Duration::from_secs(1)).await;
 
-        use openswarm_hierarchy::{EpochManager, GeoCluster, PyramidAllocator, SuccessionManager};
-        use openswarm_protocol::{AgentId, SwarmId, Tier};
-        use openswarm_state::{ContentStore, GranularityAlgorithm, MerkleDag, OrSet};
+        use wws_hierarchy::{EpochManager, GeoCluster, PyramidAllocator, SuccessionManager};
+        use wws_protocol::{AgentId, SwarmId, Tier};
+        use wws_state::{ContentStore, GranularityAlgorithm, MerkleDag, OrSet};
 
         let state = ConnectorState {
             agent_id: AgentId::new("did:swarm:console-test".to_string()),
@@ -1532,7 +1532,7 @@ mod tests {
             succession: SuccessionManager::new(),
             rfp_coordinators: std::collections::HashMap::new(),
             voting_engines: std::collections::HashMap::new(),
-            cascade: openswarm_consensus::CascadeEngine::new(),
+            cascade: wws_consensus::CascadeEngine::new(),
             task_set: OrSet::new("seed".to_string()),
             task_details: std::collections::HashMap::new(),
             task_timelines: std::collections::HashMap::new(),
@@ -1556,7 +1556,7 @@ mod tests {
             current_layout: None,
             subordinates: std::collections::HashMap::new(),
             task_results: std::collections::HashMap::new(),
-            network_stats: openswarm_protocol::NetworkStats {
+            network_stats: wws_protocol::NetworkStats {
                 total_agents: 1,
                 hierarchy_depth: 1,
                 branching_factor: 10,
@@ -1596,9 +1596,9 @@ mod tests {
         .expect("message receive timeout")
         .expect("task injection message");
 
-        let msg: openswarm_protocol::SwarmMessage =
+        let msg: wws_protocol::SwarmMessage =
             serde_json::from_slice(&received).expect("valid swarm message");
-        assert_eq!(msg.method, openswarm_protocol::ProtocolMethod::TaskInjection.as_str());
+        assert_eq!(msg.method, wws_protocol::ProtocolMethod::TaskInjection.as_str());
 
         task_a.abort();
         task_b.abort();

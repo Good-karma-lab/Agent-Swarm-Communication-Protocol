@@ -60,7 +60,7 @@ pub struct BehaviourConfig {
 impl Default for BehaviourConfig {
     fn default() -> Self {
         Self {
-            protocol_version: openswarm_protocol::PROTOCOL_VERSION.to_string(),
+            protocol_version: wws_protocol::PROTOCOL_VERSION.to_string(),
             kad_protocol: "/openswarm/kad/1.0.0".to_string(),
             gossipsub_heartbeat: Duration::from_secs(1),
             gossipsub_strict: true,

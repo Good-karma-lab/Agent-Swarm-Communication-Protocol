@@ -6,7 +6,7 @@
 //! - NodeScore composite score computation
 //! - AgentProfile construction
 
-use openswarm_protocol::identity::*;
+use wws_protocol::identity::*;
 
 // ═══════════════════════════════════════════════════════════════
 // § 3.3 AgentId

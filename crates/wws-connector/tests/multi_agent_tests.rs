@@ -10,12 +10,12 @@ use std::time::Duration;
 
 use tokio::time::timeout;
 
-use openswarm_network::{
+use wws_network::{
     NetworkEvent, SwarmHandle, SwarmHost, SwarmHostConfig,
     discovery::DiscoveryConfig,
     transport::TransportConfig,
 };
-use openswarm_protocol::{
+use wws_protocol::{
     AgentId, ProtocolMethod, ProposalCommitParams, SwarmMessage, SwarmTopics,
 };
 
@@ -37,7 +37,7 @@ fn spawn_node() -> (SwarmHost, SwarmHandle, tokio::sync::mpsc::Receiver<NetworkE
 async fn wait_for_peer_connected(
     rx: &mut tokio::sync::mpsc::Receiver<NetworkEvent>,
     timeout_dur: Duration,
-) -> Option<openswarm_network::PeerId> {
+) -> Option<wws_network::PeerId> {
     let deadline = tokio::time::Instant::now() + timeout_dur;
     loop {
         match timeout(deadline - tokio::time::Instant::now(), rx.recv()).await {
@@ -52,7 +52,7 @@ async fn wait_for_peer_connected(
 async fn wait_for_listening(
     rx: &mut tokio::sync::mpsc::Receiver<NetworkEvent>,
     timeout_dur: Duration,
-) -> Option<openswarm_network::Multiaddr> {
+) -> Option<wws_network::Multiaddr> {
     let deadline = tokio::time::Instant::now() + timeout_dur;
     loop {
         match timeout(deadline - tokio::time::Instant::now(), rx.recv()).await {
@@ -427,9 +427,9 @@ async fn test_three_node_network() {
 
 #[test]
 fn test_pyramid_assignment_for_multi_agent_swarm() {
-    use openswarm_hierarchy::PyramidAllocator;
-    use openswarm_protocol::{AgentId, Tier};
-    use openswarm_protocol::identity::NodeScore;
+    use wws_hierarchy::PyramidAllocator;
+    use wws_protocol::{AgentId, Tier};
+    use wws_protocol::identity::NodeScore;
 
     let allocator = PyramidAllocator::default(); // k=10
 
@@ -533,10 +533,10 @@ async fn test_swarm_size_estimation() {
 
 #[test]
 fn test_full_consensus_flow_offline() {
-    use openswarm_consensus::{RfpCoordinator, VotingEngine};
-    use openswarm_consensus::voting::VotingConfig;
-    use openswarm_protocol::{AgentId, Plan, Task};
-    use openswarm_protocol::messages::{ProposalCommitParams, ProposalRevealParams};
+    use wws_consensus::{RfpCoordinator, VotingEngine};
+    use wws_consensus::voting::VotingConfig;
+    use wws_protocol::{AgentId, Plan, Task};
+    use wws_protocol::messages::{ProposalCommitParams, ProposalRevealParams};
 
     // 1. Create a task.
     let task = Task::new("Build a website".into(), 1, 1);
@@ -613,7 +613,7 @@ fn test_full_consensus_flow_offline() {
 
     // All prefer plan_a over plan_b.
     for voter in [&voter_c, &voter_d, &voter_e] {
-        let vote = openswarm_protocol::types::RankedVote {
+        let vote = wws_protocol::types::RankedVote {
             voter: voter.clone(),
             task_id: task_id.clone(),
             epoch: 1,

@@ -17,7 +17,7 @@ use std::pin::Pin;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use openswarm_protocol::{AgentId, Artifact, Task};
+use wws_protocol::{AgentId, Artifact, Task};
 
 /// A task formatted for the AI agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,7 +195,7 @@ impl AgentBridge {
 
     /// Convert an agent result into a protocol Artifact.
     pub fn result_to_artifact(&self, result: &AgentResult) -> Artifact {
-        let content_cid = openswarm_protocol::crypto::compute_cid(&result.content);
+        let content_cid = wws_protocol::crypto::compute_cid(&result.content);
         let merkle_hash = content_cid.clone(); // Simplified; full implementation chains hashes.
 
         Artifact {

@@ -5,7 +5,7 @@
 //! - Decomposition strategy selection
 //! - Redundant execution for atomic tasks
 
-use openswarm_state::granularity::{GranularityEngine, DecompositionStrategy};
+use wws_state::granularity::{GranularityEngine, DecompositionStrategy};
 
 // ═══════════════════════════════════════════════════════════════
 // § 9.2 Utilization Formula

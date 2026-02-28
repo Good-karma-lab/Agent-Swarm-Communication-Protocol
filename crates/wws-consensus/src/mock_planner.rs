@@ -5,7 +5,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use openswarm_protocol::{AgentId, Plan, PlanSubtask};
+use wws_protocol::{AgentId, Plan, PlanSubtask};
 use crate::rfp::{PlanGenerator, PlanContext};
 use crate::ConsensusError;
 

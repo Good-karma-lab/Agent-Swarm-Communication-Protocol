@@ -84,7 +84,7 @@ impl TopicManager {
         &mut self,
         gossipsub: &mut gossipsub::Behaviour,
     ) -> Result<(), NetworkError> {
-        use openswarm_protocol::SwarmTopics;
+        use wws_protocol::SwarmTopics;
 
         // Global swarm discovery topic (shared across all swarms).
         self.subscribe(gossipsub, &SwarmTopics::swarm_discovery())?;
@@ -107,7 +107,7 @@ impl TopicManager {
         gossipsub: &mut gossipsub::Behaviour,
         swarm_id: &str,
     ) -> Result<(), NetworkError> {
-        use openswarm_protocol::SwarmTopics;
+        use wws_protocol::SwarmTopics;
 
         self.subscribe(gossipsub, &SwarmTopics::swarm_announce(swarm_id))?;
         self.subscribe(gossipsub, &SwarmTopics::election_tier1_for(swarm_id))?;
@@ -124,7 +124,7 @@ impl TopicManager {
         gossipsub: &mut gossipsub::Behaviour,
         tier: u32,
     ) -> Result<(), NetworkError> {
-        use openswarm_protocol::SwarmTopics;
+        use wws_protocol::SwarmTopics;
 
         self.subscribe(gossipsub, &SwarmTopics::tasks(tier))?;
         tracing::info!(tier, "Subscribed to tier task topics");
@@ -137,7 +137,7 @@ impl TopicManager {
         gossipsub: &mut gossipsub::Behaviour,
         task_id: &str,
     ) -> Result<(), NetworkError> {
-        use openswarm_protocol::SwarmTopics;
+        use wws_protocol::SwarmTopics;
 
         self.subscribe(gossipsub, &SwarmTopics::proposals(task_id))?;
         self.subscribe(gossipsub, &SwarmTopics::voting(task_id))?;
@@ -152,7 +152,7 @@ impl TopicManager {
         gossipsub: &mut gossipsub::Behaviour,
         task_id: &str,
     ) -> Result<(), NetworkError> {
-        use openswarm_protocol::SwarmTopics;
+        use wws_protocol::SwarmTopics;
 
         // Best-effort unsubscribe; ignore errors for topics we may not be subscribed to.
         let _ = self.unsubscribe(gossipsub, &SwarmTopics::proposals(task_id));

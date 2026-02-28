@@ -20,12 +20,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use openswarm_consensus::rfp::RfpPhase;
+use wws_consensus::rfp::RfpPhase;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
-use openswarm_protocol::*;
+use wws_protocol::*;
 
 use crate::connector::{ConnectorState, SwarmRecord, TaskTimelineEvent, TaskVoteRequirement};
 
@@ -39,7 +39,7 @@ pub struct RpcServer {
     /// Shared connector state.
     state: Arc<RwLock<ConnectorState>>,
     /// Network handle for network operations.
-    network_handle: openswarm_network::SwarmHandle,
+    network_handle: wws_network::SwarmHandle,
     /// Maximum concurrent connections.
     max_connections: usize,
 }
@@ -49,7 +49,7 @@ impl RpcServer {
     pub fn new(
         bind_addr: String,
         state: Arc<RwLock<ConnectorState>>,
-        network_handle: openswarm_network::SwarmHandle,
+        network_handle: wws_network::SwarmHandle,
         max_connections: usize,
     ) -> Self {
         Self {
@@ -99,7 +99,7 @@ impl RpcServer {
 async fn handle_connection(
     stream: tokio::net::TcpStream,
     state: Arc<RwLock<ConnectorState>>,
-    network_handle: openswarm_network::SwarmHandle,
+    network_handle: wws_network::SwarmHandle,
 ) -> Result<(), anyhow::Error> {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
@@ -119,7 +119,7 @@ async fn handle_connection(
 async fn process_request(
     request_str: &str,
     state: &Arc<RwLock<ConnectorState>>,
-    network_handle: &openswarm_network::SwarmHandle,
+    network_handle: &wws_network::SwarmHandle,
 ) -> SwarmResponse {
     // Parse the request.
     let request: SwarmMessage = match serde_json::from_str(request_str) {
@@ -194,7 +194,7 @@ async fn handle_submit_vote(
     id: Option<String>,
     params: &serde_json::Value,
     state: &Arc<RwLock<ConnectorState>>,
-    network_handle: &openswarm_network::SwarmHandle,
+    network_handle: &wws_network::SwarmHandle,
 ) -> SwarmResponse {
     let task_id = match params.get("task_id").and_then(|v| v.as_str()) {
         Some(v) if !v.is_empty() => v.to_string(),
@@ -242,8 +242,8 @@ async fn handle_submit_vote(
 
         let (ballot_count, proposal_count, accepted_rankings) = {
             let voting = state.voting_engines.entry(task_id.clone()).or_insert_with(|| {
-                let engine = openswarm_consensus::VotingEngine::new(
-                    openswarm_consensus::voting::VotingConfig::default(),
+                let engine = wws_consensus::VotingEngine::new(
+                    wws_consensus::voting::VotingConfig::default(),
                     task_id.clone(),
                     epoch,
                 );
@@ -264,7 +264,7 @@ async fn handle_submit_vote(
 
                 match voting.record_vote(ranked_vote) {
                     Ok(()) => break,
-                    Err(openswarm_consensus::ConsensusError::SelfVoteProhibited(_))
+                    Err(wws_consensus::ConsensusError::SelfVoteProhibited(_))
                         if accepted_rankings.len() > 1 && attempts_left > 1 =>
                     {
                         accepted_rankings.rotate_left(1);
@@ -350,7 +350,7 @@ async fn handle_submit_critique(
     id: Option<String>,
     params: &serde_json::Value,
     state: &Arc<RwLock<ConnectorState>>,
-    network_handle: &openswarm_network::SwarmHandle,
+    network_handle: &wws_network::SwarmHandle,
 ) -> SwarmResponse {
     let task_id = match params.get("task_id").and_then(|v| v.as_str()) {
         Some(v) if !v.is_empty() => v.to_string(),
@@ -524,7 +524,7 @@ async fn handle_get_voting_state(
 async fn handle_connect(
     id: Option<String>,
     params: &serde_json::Value,
-    network_handle: &openswarm_network::SwarmHandle,
+    network_handle: &wws_network::SwarmHandle,
 ) -> SwarmResponse {
     let addr_str = match params.get("addr").and_then(|v| v.as_str()) {
         Some(a) => a,
@@ -537,7 +537,7 @@ async fn handle_connect(
         }
     };
 
-    let addr: openswarm_network::Multiaddr = match addr_str.parse() {
+    let addr: wws_network::Multiaddr = match addr_str.parse() {
         Ok(a) => a,
         Err(e) => {
             return SwarmResponse::error(
@@ -575,7 +575,7 @@ pub(crate) async fn handle_propose_plan(
     id: Option<String>,
     params: &serde_json::Value,
     state: &Arc<RwLock<ConnectorState>>,
-    network_handle: &openswarm_network::SwarmHandle,
+    network_handle: &wws_network::SwarmHandle,
 ) -> SwarmResponse {
     let mut plan: Plan = match serde_json::from_value(params.clone()) {
         Ok(p) => p,
@@ -601,7 +601,7 @@ pub(crate) async fn handle_propose_plan(
         );
     }
 
-    let plan_hash = match openswarm_consensus::RfpCoordinator::compute_plan_hash(&plan) {
+    let plan_hash = match wws_consensus::RfpCoordinator::compute_plan_hash(&plan) {
         Ok(h) => h,
         Err(e) => {
             return SwarmResponse::error(
@@ -656,7 +656,7 @@ pub(crate) async fn handle_propose_plan(
                 .rfp_coordinators
                 .entry(plan.task_id.clone())
                 .or_insert_with(|| {
-                    openswarm_consensus::RfpCoordinator::new(
+                    wws_consensus::RfpCoordinator::new(
                         plan.task_id.clone(),
                         plan.epoch,
                         expected_proposers,
@@ -818,8 +818,8 @@ pub(crate) async fn handle_propose_plan(
 
         let has_proposals = !proposal_owners.is_empty();
         let voting = state.voting_engines.entry(plan.task_id.clone()).or_insert_with(|| {
-            openswarm_consensus::VotingEngine::new(
-                openswarm_consensus::voting::VotingConfig::default(),
+            wws_consensus::VotingEngine::new(
+                wws_consensus::voting::VotingConfig::default(),
                 plan.task_id.clone(),
                 plan.epoch,
             )
@@ -1027,7 +1027,7 @@ pub(crate) async fn handle_submit_result(
     id: Option<String>,
     params: &serde_json::Value,
     state: &Arc<RwLock<ConnectorState>>,
-    network_handle: &openswarm_network::SwarmHandle,
+    network_handle: &wws_network::SwarmHandle,
 ) -> SwarmResponse {
     let mut submission: ResultSubmissionParams = match serde_json::from_value(params.clone()) {
         Ok(s) => s,
@@ -1457,7 +1457,7 @@ async fn handle_register_agent(
     id: Option<String>,
     params: &serde_json::Value,
     state: &Arc<RwLock<ConnectorState>>,
-    network_handle: &openswarm_network::SwarmHandle,
+    network_handle: &wws_network::SwarmHandle,
 ) -> SwarmResponse {
     let requested_agent_id = match params.get("agent_id").and_then(|v| v.as_str()) {
         Some(v) if !v.trim().is_empty() => v.trim().to_string(),
@@ -1501,7 +1501,7 @@ async fn handle_register_agent(
             state.subordinates.clear();
 
             let k = dynamic_branching_factor(swarm_size) as usize;
-            let distribution = openswarm_hierarchy::PyramidAllocator::distribute(swarm_size, k as u64);
+            let distribution = wws_hierarchy::PyramidAllocator::distribute(swarm_size, k as u64);
             let tier_sizes: Vec<usize> = distribution.tiers.iter().map(|n| *n as usize).collect();
             let levels = tier_sizes.len().max(1);
 
@@ -1584,9 +1584,9 @@ async fn handle_register_agent(
                     .unwrap_or(0) as u32;
             }
             state.network_stats.hierarchy_depth = levels as u32;
-            state.current_layout = openswarm_hierarchy::PyramidAllocator::new(openswarm_hierarchy::pyramid::PyramidConfig {
+            state.current_layout = wws_hierarchy::PyramidAllocator::new(wws_hierarchy::pyramid::PyramidConfig {
                 branching_factor: k as u32,
-                max_depth: openswarm_protocol::MAX_HIERARCHY_DEPTH,
+                max_depth: wws_protocol::MAX_HIERARCHY_DEPTH,
             })
             .compute_layout(swarm_size)
             .ok();
@@ -1848,7 +1848,7 @@ pub(crate) async fn handle_inject_task(
     id: Option<String>,
     params: &serde_json::Value,
     state: &Arc<RwLock<ConnectorState>>,
-    network_handle: &openswarm_network::SwarmHandle,
+    network_handle: &wws_network::SwarmHandle,
 ) -> SwarmResponse {
     let description = match params.get("description").and_then(|v| v.as_str()) {
         Some(d) => d.to_string(),
@@ -1863,7 +1863,7 @@ pub(crate) async fn handle_inject_task(
 
     let mut state_guard = state.write().await;
     let epoch = state_guard.epoch_manager.current_epoch();
-    let mut task = openswarm_protocol::Task::new(description.clone(), 1, epoch);
+    let mut task = wws_protocol::Task::new(description.clone(), 1, epoch);
     // Accept an optional pre-specified task_id (for multi-node injection with same ID)
     if let Some(v) = params.get("task_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
         task.task_id = v.to_string();
@@ -1924,7 +1924,7 @@ pub(crate) async fn handle_inject_task(
             .count()
             .max(1);
 
-        let mut rfp = openswarm_consensus::RfpCoordinator::new(
+        let mut rfp = wws_consensus::RfpCoordinator::new(
             task_id.clone(),
             epoch,
             expected_participants,

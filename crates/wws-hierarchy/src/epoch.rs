@@ -11,7 +11,7 @@
 
 use chrono::{DateTime, Utc};
 
-use openswarm_protocol::{AgentId, DEFAULT_EPOCH_DURATION_SECS};
+use wws_protocol::{AgentId, DEFAULT_EPOCH_DURATION_SECS};
 
 /// Configuration for epoch management.
 #[derive(Debug, Clone)]
@@ -238,8 +238,8 @@ impl EpochManager {
     }
 
     /// Convert current epoch to the protocol Epoch type.
-    pub fn to_protocol_epoch(&self) -> openswarm_protocol::Epoch {
-        openswarm_protocol::Epoch {
+    pub fn to_protocol_epoch(&self) -> wws_protocol::Epoch {
+        wws_protocol::Epoch {
             epoch_number: self.current.epoch_number,
             started_at: self.current.started_at,
             duration_secs: self.config.duration_secs,

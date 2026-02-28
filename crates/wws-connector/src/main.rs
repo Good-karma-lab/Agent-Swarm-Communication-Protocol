@@ -17,10 +17,10 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
-use openswarm_connector::config::ConnectorConfig;
-use openswarm_connector::connector::OpenSwarmConnector;
-use openswarm_connector::file_server::FileServer;
-use openswarm_connector::rpc_server::RpcServer;
+use wws_connector::config::ConnectorConfig;
+use wws_connector::connector::OpenSwarmConnector;
+use wws_connector::file_server::FileServer;
+use wws_connector::rpc_server::RpcServer;
 
 /// ASIP.Connector - Sidecar process connecting AI agents to the swarm.
 #[derive(Parser, Debug)]
@@ -213,7 +213,7 @@ async fn main() -> anyhow::Result<()> {
         let console_network_handle = connector.network_handle();
         let console_handle = tokio::spawn(async move {
             if let Err(e) =
-                openswarm_connector::operator_console::run_operator_console(
+                wws_connector::operator_console::run_operator_console(
                     console_state,
                     console_network_handle,
                 )
@@ -243,7 +243,7 @@ async fn main() -> anyhow::Result<()> {
         // Spawn the TUI in a separate task.
         let tui_state = state.clone();
         let tui_handle = tokio::spawn(async move {
-            if let Err(e) = openswarm_connector::tui::run_tui(tui_state).await {
+            if let Err(e) = wws_connector::tui::run_tui(tui_state).await {
                 let err_msg = e.to_string();
                 if err_msg.contains("TTY") || err_msg.contains("terminal") {
                     tracing::warn!(

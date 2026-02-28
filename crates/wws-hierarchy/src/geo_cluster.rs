@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use openswarm_protocol::{AgentId, VivaldiCoordinates};
+use wws_protocol::{AgentId, VivaldiCoordinates};
 
 use crate::HierarchyError;
 

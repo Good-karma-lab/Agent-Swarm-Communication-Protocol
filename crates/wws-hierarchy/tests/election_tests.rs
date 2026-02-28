@@ -5,10 +5,10 @@
 //! - Latency/centrality is considered
 //! - Re-election at epoch boundaries
 
-use openswarm_hierarchy::elections::{ElectionConfig, ElectionManager};
-use openswarm_hierarchy::geo_cluster::GeoCluster;
-use openswarm_hierarchy::succession::SuccessionManager;
-use openswarm_protocol::{AgentId, CandidacyParams, ElectionVoteParams, NodeScore, VivaldiCoordinates};
+use wws_hierarchy::elections::{ElectionConfig, ElectionManager};
+use wws_hierarchy::geo_cluster::GeoCluster;
+use wws_hierarchy::succession::SuccessionManager;
+use wws_protocol::{AgentId, CandidacyParams, ElectionVoteParams, NodeScore, VivaldiCoordinates};
 
 /// Helper to build a CandidacyParams with the given scores and epoch.
 fn make_candidacy(

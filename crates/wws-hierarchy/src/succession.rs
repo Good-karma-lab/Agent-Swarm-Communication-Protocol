@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 
-use openswarm_protocol::{AgentId, NodeScore, KEEPALIVE_INTERVAL_SECS, LEADER_TIMEOUT_SECS};
+use wws_protocol::{AgentId, NodeScore, KEEPALIVE_INTERVAL_SECS, LEADER_TIMEOUT_SECS};
 
 use crate::HierarchyError;
 

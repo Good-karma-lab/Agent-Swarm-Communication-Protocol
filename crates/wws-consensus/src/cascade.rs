@@ -16,7 +16,7 @@
 
 use std::collections::HashMap;
 
-use openswarm_protocol::{AgentId, Plan, Task, TaskStatus, Tier};
+use wws_protocol::{AgentId, Plan, Task, TaskStatus, Tier};
 
 use crate::ConsensusError;
 
@@ -355,7 +355,7 @@ impl Default for CascadeEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openswarm_protocol::PlanSubtask;
+    use wws_protocol::PlanSubtask;
 
     fn make_plan(task_id: &str) -> Plan {
         let mut plan = Plan::new(

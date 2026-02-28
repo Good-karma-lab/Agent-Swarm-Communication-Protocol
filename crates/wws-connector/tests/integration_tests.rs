@@ -5,13 +5,13 @@
 //! - Identity creation -> handshake -> hierarchy formation
 //! - Task injection -> RFP -> voting -> cascade -> execution -> verification
 
-use openswarm_protocol::crypto::{
+use wws_protocol::crypto::{
     compute_cid, derive_agent_id, generate_keypair, sign_message, verify_signature,
 };
-use openswarm_protocol::identity::*;
-use openswarm_protocol::messages::*;
-use openswarm_protocol::types::*;
-use openswarm_protocol::constants::*;
+use wws_protocol::identity::*;
+use wws_protocol::messages::*;
+use wws_protocol::types::*;
+use wws_protocol::constants::*;
 
 // ═══════════════════════════════════════════════════════════════
 // End-to-End: Identity and Handshake
@@ -149,7 +149,7 @@ fn e2e_task_lifecycle_messages() {
 
 #[test]
 fn e2e_hierarchy_depth_matches_spec_examples() {
-    use openswarm_hierarchy::PyramidAllocator;
+    use wws_hierarchy::PyramidAllocator;
 
     let allocator = PyramidAllocator::default(); // k=10
 
@@ -209,7 +209,7 @@ fn e2e_node_scores_ranked_correctly() {
 
 #[test]
 fn e2e_merkle_verification_three_tier() {
-    use openswarm_state::MerkleDag;
+    use wws_state::MerkleDag;
 
     // Simulate 3-tier hierarchy: 1 root, 2 coordinators, 4 executors
     let mut dag = MerkleDag::new();
@@ -258,7 +258,7 @@ fn e2e_merkle_verification_three_tier() {
 
 #[test]
 fn e2e_multilevel_cascade_decomposition_and_backprop() {
-    use openswarm_consensus::CascadeEngine;
+    use wws_consensus::CascadeEngine;
 
     let mut cascade = CascadeEngine::new();
 

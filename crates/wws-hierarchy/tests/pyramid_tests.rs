@@ -6,8 +6,8 @@
 //! - Edge cases: N=1, N=k, N=k^2, etc.
 //! - Partial last tier
 
-use openswarm_hierarchy::pyramid::{PyramidAllocator, PyramidConfig};
-use openswarm_protocol::{Tier, MAX_HIERARCHY_DEPTH};
+use wws_hierarchy::pyramid::{PyramidAllocator, PyramidConfig};
+use wws_protocol::{Tier, MAX_HIERARCHY_DEPTH};
 
 /// Helper: create a default allocator (k=10, max_depth=MAX_HIERARCHY_DEPTH).
 fn default_allocator() -> PyramidAllocator {

@@ -153,16 +153,16 @@ fn default_idle_timeout() -> u64 {
     60
 }
 fn default_branching_factor() -> u32 {
-    openswarm_protocol::DEFAULT_BRANCHING_FACTOR
+    wws_protocol::DEFAULT_BRANCHING_FACTOR
 }
 fn default_epoch_duration() -> u64 {
-    openswarm_protocol::DEFAULT_EPOCH_DURATION_SECS
+    wws_protocol::DEFAULT_EPOCH_DURATION_SECS
 }
 fn default_leader_timeout() -> u64 {
-    openswarm_protocol::LEADER_TIMEOUT_SECS
+    wws_protocol::LEADER_TIMEOUT_SECS
 }
 fn default_keepalive_interval() -> u64 {
-    openswarm_protocol::KEEPALIVE_INTERVAL_SECS
+    wws_protocol::KEEPALIVE_INTERVAL_SECS
 }
 fn default_rpc_addr() -> String {
     "127.0.0.1:9370".to_string()
@@ -180,13 +180,13 @@ fn default_log_level() -> String {
     "info".to_string()
 }
 fn default_swarm_id() -> String {
-    openswarm_protocol::DEFAULT_SWARM_ID.to_string()
+    wws_protocol::DEFAULT_SWARM_ID.to_string()
 }
 fn default_swarm_name() -> String {
-    openswarm_protocol::DEFAULT_SWARM_NAME.to_string()
+    wws_protocol::DEFAULT_SWARM_NAME.to_string()
 }
 fn default_swarm_announce_interval() -> u64 {
-    openswarm_protocol::SWARM_ANNOUNCE_INTERVAL_SECS
+    wws_protocol::SWARM_ANNOUNCE_INTERVAL_SECS
 }
 fn default_file_server_addr() -> String {
     "127.0.0.1:9371".to_string()

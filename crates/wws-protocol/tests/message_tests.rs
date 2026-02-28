@@ -8,10 +8,10 @@
 //! - All message payload types serialization
 //! - Response construction (success and error)
 
-use openswarm_protocol::messages::*;
-use openswarm_protocol::types::*;
-use openswarm_protocol::identity::*;
-use openswarm_protocol::constants::*;
+use wws_protocol::messages::*;
+use wws_protocol::types::*;
+use wws_protocol::identity::*;
+use wws_protocol::constants::*;
 
 // ═══════════════════════════════════════════════════════════════
 // § 3.1 SwarmMessage Envelope (JSON-RPC 2.0)

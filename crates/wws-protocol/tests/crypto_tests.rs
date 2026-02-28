@@ -7,7 +7,7 @@
 //! - Proof of Work generation and verification
 //! - Hex encoding/decoding roundtrips
 
-use openswarm_protocol::crypto::*;
+use wws_protocol::crypto::*;
 
 // ═══════════════════════════════════════════════════════════════
 // § 3.3 Identity — Agent ID Derivation

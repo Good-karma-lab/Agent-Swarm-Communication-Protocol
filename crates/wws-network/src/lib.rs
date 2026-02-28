@@ -54,7 +54,7 @@ pub enum NetworkError {
     Serialization(String),
 
     #[error("Protocol error: {0}")]
-    Protocol(#[from] openswarm_protocol::ProtocolError),
+    Protocol(#[from] wws_protocol::ProtocolError),
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),

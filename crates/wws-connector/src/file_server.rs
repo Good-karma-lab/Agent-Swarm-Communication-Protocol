@@ -15,7 +15,7 @@ use serde::Deserialize;
 use tokio::sync::RwLock;
 use tower_http::services::{ServeDir, ServeFile};
 
-use openswarm_protocol::Tier;
+use wws_protocol::Tier;
 
 use crate::connector::{ConnectorState, MessageTraceEvent};
 
@@ -36,13 +36,13 @@ static DOCS: EmbeddedDocs = EmbeddedDocs {
 #[derive(Clone)]
 struct WebState {
     state: Arc<RwLock<ConnectorState>>,
-    network_handle: openswarm_network::SwarmHandle,
+    network_handle: wws_network::SwarmHandle,
 }
 
 pub struct FileServer {
     bind_addr: String,
     state: Arc<RwLock<ConnectorState>>,
-    network_handle: openswarm_network::SwarmHandle,
+    network_handle: wws_network::SwarmHandle,
     web_root: PathBuf,
 }
 
@@ -50,7 +50,7 @@ impl FileServer {
     pub fn new(
         bind_addr: String,
         state: Arc<RwLock<ConnectorState>>,
-        network_handle: openswarm_network::SwarmHandle,
+        network_handle: wws_network::SwarmHandle,
     ) -> Self {
         Self {
             bind_addr,
@@ -643,8 +643,8 @@ async fn api_agents(State(web): State<WebState>) -> Json<serde_json::Value> {
 
 fn collect_task_descendants(
     root: &str,
-    details: &HashMap<String, openswarm_protocol::Task>,
-) -> Vec<openswarm_protocol::Task> {
+    details: &HashMap<String, wws_protocol::Task>,
+) -> Vec<wws_protocol::Task> {
     let mut out = Vec::new();
     let mut frontier = vec![root.to_string()];
     while let Some(parent) = frontier.pop() {
