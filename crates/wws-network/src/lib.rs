@@ -8,6 +8,7 @@
 
 pub mod behaviour;
 pub mod discovery;
+pub mod dns_bootstrap;
 pub mod size_estimator;
 pub mod swarm_host;
 pub mod topics;
