@@ -276,3 +276,50 @@ fn test_load_or_create_keypair_wrong_size() {
     let result = wws_protocol::crypto::load_or_create_keypair(&path);
     assert!(result.is_err());
 }
+
+// ═══════════════════════════════════════════════════════════════
+// § BIP-39 Mnemonic export/import and recovery key derivation
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn test_mnemonic_from_keypair_roundtrip() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.key");
+    let key = wws_protocol::crypto::load_or_create_keypair(&path).unwrap();
+    let mnemonic = wws_protocol::crypto::keypair_to_mnemonic(&key).unwrap();
+    let words: Vec<&str> = mnemonic.split_whitespace().collect();
+    assert_eq!(words.len(), 24);
+    let restored = wws_protocol::crypto::keypair_from_mnemonic(&mnemonic).unwrap();
+    assert_eq!(key.verifying_key().as_bytes(), restored.verifying_key().as_bytes());
+}
+
+#[test]
+fn test_mnemonic_is_english() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.key");
+    let key = wws_protocol::crypto::load_or_create_keypair(&path).unwrap();
+    let mnemonic = wws_protocol::crypto::keypair_to_mnemonic(&key).unwrap();
+    // All words should be lowercase ASCII
+    for word in mnemonic.split_whitespace() {
+        assert!(word.chars().all(|c| c.is_ascii_lowercase()), "word not lowercase ASCII: {word}");
+    }
+}
+
+#[test]
+fn test_recovery_keypair_differs_from_primary() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.key");
+    let primary = wws_protocol::crypto::load_or_create_keypair(&path).unwrap();
+    let recovery = wws_protocol::crypto::derive_recovery_key(&primary);
+    assert_ne!(primary.verifying_key().as_bytes(), recovery.verifying_key().as_bytes());
+}
+
+#[test]
+fn test_recovery_key_deterministic() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.key");
+    let primary = wws_protocol::crypto::load_or_create_keypair(&path).unwrap();
+    let r1 = wws_protocol::crypto::derive_recovery_key(&primary);
+    let r2 = wws_protocol::crypto::derive_recovery_key(&primary);
+    assert_eq!(r1.verifying_key().as_bytes(), r2.verifying_key().as_bytes());
+}

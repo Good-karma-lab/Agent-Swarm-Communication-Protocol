@@ -128,6 +128,42 @@ pub fn load_or_create_keypair(path: &Path) -> Result<SigningKey, crate::Protocol
     }
 }
 
+/// Derive a 24-word BIP-39 mnemonic from an Ed25519 signing key.
+/// The mnemonic encodes the 32-byte seed as 256 bits → 24 words.
+pub fn keypair_to_mnemonic(key: &SigningKey) -> Result<String, crate::ProtocolError> {
+    use bip39::Mnemonic;
+    let seed = key.to_bytes();
+    let mnemonic = Mnemonic::from_entropy(&seed)
+        .map_err(|e| crate::ProtocolError::Crypto(format!("mnemonic generation: {e}")))?;
+    Ok(mnemonic.to_string())
+}
+
+/// Restore an Ed25519 signing key from a 24-word BIP-39 mnemonic.
+pub fn keypair_from_mnemonic(phrase: &str) -> Result<SigningKey, crate::ProtocolError> {
+    use bip39::Mnemonic;
+    use zeroize::Zeroize;
+    let mnemonic = Mnemonic::parse(phrase)
+        .map_err(|e| crate::ProtocolError::Crypto(format!("invalid mnemonic: {e}")))?;
+    let mut entropy = mnemonic.to_entropy();
+    if entropy.len() < 32 {
+        return Err(crate::ProtocolError::Crypto("entropy too short".into()));
+    }
+    let seed: [u8; 32] = entropy[..32].try_into().unwrap();
+    entropy.zeroize();
+    Ok(SigningKey::from_bytes(&seed))
+}
+
+/// Derive a recovery keypair from the primary signing key.
+/// Uses SHA-256 hash of (primary_seed || "wws-recovery") as the recovery seed.
+pub fn derive_recovery_key(primary: &SigningKey) -> SigningKey {
+    let seed = primary.to_bytes();
+    let mut hasher = Sha256::new();
+    hasher.update(&seed);
+    hasher.update(b"wws-recovery");
+    let recovery_seed: [u8; 32] = hasher.finalize().into();
+    SigningKey::from_bytes(&recovery_seed)
+}
+
 /// Hex-decode a string into bytes.
 pub fn hex_decode(s: &str) -> Result<Vec<u8>, ProtocolError> {
     if s.len() % 2 != 0 {
