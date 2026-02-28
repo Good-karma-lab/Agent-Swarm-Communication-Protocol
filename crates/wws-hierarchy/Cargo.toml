@@ -1,17 +1,16 @@
 [package]
-name = "openswarm-state"
-description = "CRDT state management and Merkle-DAG verification for OpenSwarm"
+name = "wws-hierarchy"
+description = "Dynamic Pyramid Allocation and role management for WWS"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-openswarm-protocol = { workspace = true }
+wws-protocol = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
-sha2 = { workspace = true }
 chrono = { workspace = true }
-uuid = { workspace = true }
+rand = { workspace = true }

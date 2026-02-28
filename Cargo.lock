@@ -2465,111 +2465,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
-name = "openswarm-connector"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "chrono",
- "clap",
- "crossterm",
- "ed25519-dalek",
- "openswarm-consensus",
- "openswarm-hierarchy",
- "openswarm-network",
- "openswarm-protocol",
- "openswarm-state",
- "ratatui",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.18",
- "tokio",
- "toml",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "openswarm-consensus"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "openswarm-protocol",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "openswarm-hierarchy"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "openswarm-protocol",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "openswarm-network"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures",
- "libp2p",
- "openswarm-protocol",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "openswarm-protocol"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "ed25519-dalek",
- "hex",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.18",
- "uuid",
-]
-
-[[package]]
-name = "openswarm-state"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "openswarm-protocol",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4421,6 +4316,111 @@ name = "writeable"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
+
+[[package]]
+name = "wws-connector"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "clap",
+ "crossterm",
+ "ed25519-dalek",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "wws-consensus",
+ "wws-hierarchy",
+ "wws-network",
+ "wws-protocol",
+ "wws-state",
+]
+
+[[package]]
+name = "wws-consensus"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+ "wws-protocol",
+]
+
+[[package]]
+name = "wws-hierarchy"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "wws-protocol",
+]
+
+[[package]]
+name = "wws-network"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "libp2p",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "wws-protocol",
+]
+
+[[package]]
+name = "wws-protocol"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "ed25519-dalek",
+ "hex",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
+name = "wws-state"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+ "wws-protocol",
+]
 
 [[package]]
 name = "x25519-dalek"

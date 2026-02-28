@@ -1,6 +1,6 @@
 [package]
-name = "openswarm-protocol"
-description = "Core protocol types and message definitions for the Agent Swarm Intelligence Protocol (ASIP)"
+name = "wws-protocol"
+description = "Core protocol types and message definitions for the World Wide Swarm (WWS)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
