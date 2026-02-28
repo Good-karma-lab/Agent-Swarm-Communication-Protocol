@@ -10,6 +10,8 @@ pub mod content_store;
 pub mod crdt;
 pub mod granularity;
 pub mod merkle_dag;
+pub mod pn_counter;
+pub mod reputation;
 
 pub use content_store::ContentStore;
 pub use crdt::OrSet;
