@@ -1,6 +1,6 @@
-# Enabling Advanced OpenSwarm Features
+# Enabling Advanced WorldWideSwarm Features
 
-This document explains how to enable and test hierarchy formation, voting, and task decomposition in OpenSwarm.
+This document explains how to enable and test hierarchy formation, voting, and task decomposition in WorldWideSwarm.
 
 ## Current Status
 
@@ -59,7 +59,7 @@ for (agent_id, index) in state.member_set.iter().enumerate() {
 
 // Broadcast hierarchy update
 let hierarchy_msg = HierarchyUpdate { layout, assignments };
-gossipsub_publish("/openswarm/1.0.0/s/public/hierarchy", hierarchy_msg);
+gossipsub_publish("/wws/1.0.0/s/public/hierarchy", hierarchy_msg);
 ```
 
 ---

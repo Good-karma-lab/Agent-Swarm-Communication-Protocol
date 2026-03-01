@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# OpenSwarm Agent Runner
+# WorldWideSwarm Agent Runner
 # Starts a swarm connector and an AI agent (Claude Code CLI or Zeroclaw) connected to it
 
 set -e
@@ -55,10 +55,11 @@ AGENT_NAME=""
 BOOTSTRAP_PEER=""
 SWARM_ID="public"
 CONNECTOR_ONLY=false
+IDENTITY_PATH=""
 
 usage() {
     cat << EOF
-${GREEN}OpenSwarm Agent Runner${NC}
+${GREEN}WorldWideSwarm Agent Runner${NC}
 
 Starts a swarm connector node and an AI agent connected to it.
 
@@ -66,8 +67,9 @@ Usage: $0 [OPTIONS]
 
 Options:
     -n, --name NAME          Agent name (default: auto-generated)
-    -b, --bootstrap ADDR     Bootstrap peer multiaddress
+    -b, --bootstrap ADDR     Bootstrap peer multiaddress (optional; built-in defaults used if omitted)
     -s, --swarm-id ID        Swarm ID to join (default: public)
+    --identity-path PATH     Path to identity key file (default: ~/.wws/<name>.key)
     --agent-impl IMPL        Agent implementation: claude-code-cli | zeroclaw (default: $AGENT_IMPL)
     --llm-backend BACKEND    LLM backend for Zeroclaw: anthropic | openai | openrouter | local | ollama (default: $LLM_BACKEND)
     --model-name NAME        Model name (default: $MODEL_NAME)
@@ -130,6 +132,10 @@ while [[ $# -gt 0 ]]; do
             MODEL_NAME="$2"
             shift 2
             ;;
+        --identity-path)
+            IDENTITY_PATH="$2"
+            shift 2
+            ;;
         --connector-only)
             CONNECTOR_ONLY=true
             shift
@@ -148,6 +154,12 @@ done
 if [ -z "$AGENT_NAME" ]; then
     AGENT_NAME="agent-$(date +%s)-$$"
 fi
+
+# Default identity path to ~/.wws/<agent-name>.key
+if [ -z "$IDENTITY_PATH" ]; then
+    IDENTITY_PATH="$HOME/.wws/${AGENT_NAME}.key"
+fi
+mkdir -p "$HOME/.wws"
 
 if [ "$AGENT_IMPL" = "zeroclaw" ] && [ "$ZEROCLAW_AUTO_UPDATE" = "true" ]; then
     if [ -x "./scripts/update-zeroclaw.sh" ]; then
@@ -179,17 +191,19 @@ FILES_PORT=$(find_available_port $((RPC_PORT + 1)))
 LOCAL_IP=$(get_local_ip)
 
 # Build the connector if not already built
-if [ ! -f "target/release/openswarm-connector" ]; then
-    echo -e "${YELLOW}Building OpenSwarm connector...${NC}"
+if [ ! -f "target/release/wws-connector" ]; then
+    echo -e "${YELLOW}Building WorldWideSwarm connector...${NC}"
     cargo build --release
 fi
 
 # Prepare connector command
-CONNECTOR_CMD="./target/release/openswarm-connector"
+CONNECTOR_CMD="./target/release/wws-connector"
 CONNECTOR_CMD="$CONNECTOR_CMD --listen /ip4/0.0.0.0/tcp/$P2P_PORT"
 CONNECTOR_CMD="$CONNECTOR_CMD --rpc 127.0.0.1:$RPC_PORT"
 CONNECTOR_CMD="$CONNECTOR_CMD --files-addr 127.0.0.1:$FILES_PORT"
 CONNECTOR_CMD="$CONNECTOR_CMD --agent-name \"$AGENT_NAME\""
+CONNECTOR_CMD="$CONNECTOR_CMD --wws-name \"$AGENT_NAME\""
+CONNECTOR_CMD="$CONNECTOR_CMD --identity-path \"$IDENTITY_PATH\""
 CONNECTOR_CMD="$CONNECTOR_CMD --swarm-id \"$SWARM_ID\""
 
 if [ -n "$BOOTSTRAP_PEER" ]; then
@@ -199,10 +213,11 @@ fi
 # Display connection information
 echo ""
 echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║         OpenSwarm Agent Starting...                       ║${NC}"
+echo -e "${GREEN}║         WorldWideSwarm Agent Starting...                       ║${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "${BLUE}Agent Name:${NC}     $AGENT_NAME"
+echo -e "${BLUE}Identity:${NC}       $IDENTITY_PATH"
 if [ "$AGENT_IMPL" = "zeroclaw" ]; then
     echo -e "${BLUE}LLM Backend:${NC}    $LLM_BACKEND"
     echo -e "${BLUE}Model Name:${NC}     $MODEL_NAME"
@@ -218,8 +233,8 @@ echo -e "  ${BLUE}File Server:${NC}   http://127.0.0.1:$FILES_PORT"
 echo ""
 
 # Save PID files for cleanup
-CONNECTOR_PID_FILE="/tmp/openswarm-agent-$AGENT_NAME-connector.pid"
-CLAUDE_PID_FILE="/tmp/openswarm-agent-$AGENT_NAME-claude.pid"
+CONNECTOR_PID_FILE="/tmp/wws-agent-$AGENT_NAME-connector.pid"
+CLAUDE_PID_FILE="/tmp/wws-agent-$AGENT_NAME-claude.pid"
 
 # Cleanup function
 cleanup() {
@@ -256,7 +271,7 @@ trap cleanup INT TERM
 
 # Start the connector in background
 echo -e "${BLUE}Starting swarm connector...${NC}"
-eval "$CONNECTOR_CMD" > "/tmp/openswarm-agent-$AGENT_NAME-connector.log" 2>&1 &
+eval "$CONNECTOR_CMD" > "/tmp/wws-agent-$AGENT_NAME-connector.log" 2>&1 &
 CONNECTOR_PID=$!
 echo $CONNECTOR_PID > "$CONNECTOR_PID_FILE"
 
@@ -266,7 +281,7 @@ sleep 3
 
 # Check if connector is still running
 if ! ps -p $CONNECTOR_PID > /dev/null 2>&1; then
-    echo -e "${RED}✗ Connector failed to start. Check logs at /tmp/openswarm-agent-$AGENT_NAME-connector.log${NC}"
+    echo -e "${RED}✗ Connector failed to start. Check logs at /tmp/wws-agent-$AGENT_NAME-connector.log${NC}"
     exit 1
 fi
 
@@ -298,9 +313,9 @@ fi
 echo ""
 echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
 if [ "$AGENT_IMPL" = "zeroclaw" ]; then
-    echo -e "${GREEN}Starting OpenSwarm Agent (Connector + Zeroclaw)${NC}"
+    echo -e "${GREEN}Starting WorldWideSwarm Agent (Connector + Zeroclaw)${NC}"
 else
-    echo -e "${GREEN}Starting OpenSwarm Agent (Connector + Claude Code CLI)${NC}"
+    echo -e "${GREEN}Starting WorldWideSwarm Agent (Connector + Claude Code CLI)${NC}"
 fi
 echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
 echo ""
@@ -324,7 +339,7 @@ echo ""
 # Claude's instruction: read and follow SKILL.md
 CLAUDE_INSTRUCTION="CRITICAL: You are a LONG-RUNNING AUTONOMOUS AGENT. Run in an INFINITE LOOP until interrupted.
 
-Fetch the OpenSwarm skill documentation using curl (use Bash tool, not Fetch tool):
+Fetch the WorldWideSwarm skill documentation using curl (use Bash tool, not Fetch tool):
 
 curl http://127.0.0.1:$FILES_PORT/SKILL.md
 

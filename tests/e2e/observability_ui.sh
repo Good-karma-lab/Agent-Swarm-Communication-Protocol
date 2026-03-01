@@ -6,11 +6,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
 
-TMP_DIR="$(mktemp -d /tmp/openswarm-e2e-ui.XXXXXX)"
+TMP_DIR="$(mktemp -d /tmp/wws-e2e-ui.XXXXXX)"
 
 cleanup() {
-    pkill -f "openswarm-connector --listen /ip4/127.0.0.1/tcp/2110" >/dev/null 2>&1 || true
-    pkill -f "openswarm-connector --listen /ip4/127.0.0.1/tcp/2111" >/dev/null 2>&1 || true
+    pkill -f "wws-connector --listen /ip4/127.0.0.1/tcp/2110" >/dev/null 2>&1 || true
+    pkill -f "wws-connector --listen /ip4/127.0.0.1/tcp/2111" >/dev/null 2>&1 || true
     rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
@@ -18,7 +18,7 @@ trap cleanup EXIT
 cd "$ROOT_DIR"
 
 log "Building release binary"
-cargo build --release -p openswarm-connector >/dev/null
+cargo build --release -p wws-connector >/dev/null
 
 PID_A=$(start_connector "ui-a" 21100 21370 21371 "$TMP_DIR/a.log")
 wait_for_rpc 21370
@@ -42,7 +42,7 @@ if [[ -z "$FLOW" ]]; then
 fi
 
 log "Running TUI smoke (start and immediate quit)"
-TUI_CMD="$ROOT_DIR/target/release/openswarm-connector --listen /ip4/127.0.0.1/tcp/21102 --rpc 127.0.0.1:21374 --files-addr 127.0.0.1:21375 --bootstrap $BOOT_A --agent-name ui-tui --tui"
+TUI_CMD="$ROOT_DIR/target/release/wws-connector --listen /ip4/127.0.0.1/tcp/21102 --rpc 127.0.0.1:21374 --files-addr 127.0.0.1:21375 --bootstrap $BOOT_A --agent-name ui-tui --tui"
 python3 - <<'PY' "$TUI_CMD" "$TMP_DIR/tui.log"
 import pexpect, sys, time, pathlib
 cmd, out = sys.argv[1], sys.argv[2]
@@ -56,7 +56,7 @@ pathlib.Path(out).write_text((child.before or '')[-20000:])
 PY
 
 log "Running console smoke with new flow/vote/timeline commands"
-CONSOLE_CMD="$ROOT_DIR/target/release/openswarm-connector --listen /ip4/127.0.0.1/tcp/21103 --rpc 127.0.0.1:21376 --files-addr 127.0.0.1:21377 --bootstrap $BOOT_A --agent-name ui-console --console"
+CONSOLE_CMD="$ROOT_DIR/target/release/wws-connector --listen /ip4/127.0.0.1/tcp/21103 --rpc 127.0.0.1:21376 --files-addr 127.0.0.1:21377 --bootstrap $BOOT_A --agent-name ui-console --console"
 python3 - <<'PY' "$CONSOLE_CMD" "$TMP_DIR/console.log"
 import pexpect, sys, time, pathlib
 cmd, out = sys.argv[1], sys.argv[2]

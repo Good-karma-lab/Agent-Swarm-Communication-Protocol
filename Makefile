@@ -1,4 +1,4 @@
-# OpenSwarm - Build and Distribution Makefile
+# WorldWideSwarm - Build and Distribution Makefile
 #
 # Usage:
 #   make build         - Build release binary for current platform
@@ -10,7 +10,7 @@
 #   make cross-macos   - Cross-compile for macOS x86_64
 #   make cross-all     - Cross-compile for all supported targets
 
-BINARY_NAME := openswarm-connector
+BINARY_NAME := wws-connector
 VERSION := $(shell grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 CARGO := cargo
 INSTALL_DIR := /usr/local/bin
@@ -153,7 +153,7 @@ cross-all: cross-linux cross-linux-arm cross-macos cross-macos-arm
 
 ## Show help
 help:
-	@echo "OpenSwarm Build System"
+	@echo "WWS Build System"
 	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""

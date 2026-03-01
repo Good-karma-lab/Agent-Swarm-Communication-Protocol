@@ -2,6 +2,15 @@
 
 ---
 
+### WWS
+
+* [Manifest](../MANIFEST)
+* [WWS Phases](WWS-Phases)
+* [Reputation & Identity](Reputation-Identity)
+* [Test Plan](Test-Plan)
+
+---
+
 ### Protocol Documentation
 
 * [Architecture](Architecture)
@@ -17,6 +26,7 @@
 ### Implementation
 
 * [Connector Guide](Connector-Guide)
+* [Advanced Features](ADVANCED_FEATURES)
 
 ---
 

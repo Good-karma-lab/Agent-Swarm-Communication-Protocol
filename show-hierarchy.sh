@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# Show OpenSwarm hierarchy
+# Show WorldWideSwarm hierarchy
 # Usage: ./show-hierarchy.sh [rpc_port]
 
 RPC_PORT=${1:-9370}
 
 echo "╔═══════════════════════════════════════════════════════════════╗"
-echo "║              OpenSwarm Agent Hierarchy                        ║"
+echo "║              WorldWideSwarm Agent Hierarchy                        ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
 echo ""
 

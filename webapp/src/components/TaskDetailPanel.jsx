@@ -1,6 +1,6 @@
 import { DataSet, Network } from 'vis-network/standalone'
 import { useEffect, useRef, useState } from 'react'
-import { api } from '../api/client'
+import { getDeliberation, getHolon } from '../api/client.js'
 
 function scrubId(s) {
   return String(s || '').replace(/did:swarm:[A-Za-z0-9]+/g, m => '[' + m.slice(-6) + ']')
@@ -199,8 +199,8 @@ function DeliberationTab({ taskId }) {
     if (!taskId) return
     setLoading(true)
     Promise.all([
-      api.taskDeliberation(taskId),
-      api.holonDetail(taskId).catch(() => null),
+      getDeliberation(taskId),
+      getHolon(taskId).catch(() => null),
     ]).then(([d, h]) => {
       setMsgs(d.messages || [])
       setHolonInfo(h)
@@ -399,38 +399,51 @@ function OverviewTab({ taskTrace }) {
 }
 
 // ── Main export ───────────────────────────
-export default function TaskDetailPanel({ taskId, taskTrace, taskVoting, taskBallots }) {
+export default function TaskDetailPanel({ open, taskId, onClose }) {
   const [activeTab, setActiveTab] = useState('overview')
 
   return (
-    <div>
-      <div style={{ padding: '0 0 12px' }}>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Task ID</div>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--teal)', wordBreak: 'break-all' }}>{taskId}</div>
-      </div>
+    <>
+      <div className={`panel-overlay ${open ? 'open' : ''}`} onClick={onClose} />
+      <div className={`slide-panel ${open ? 'open' : ''}`}>
+        <div className="panel-header">
+          <span className="panel-title">Task Detail</span>
+          <button className="panel-close" onClick={onClose}>✕</button>
+        </div>
+        <div className="panel-body">
+          <div style={{ padding: '0 0 12px' }}>
+            <div style={{ fontFamily: 'JetBrains Mono,monospace', fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>Task ID</div>
+            <div style={{ fontFamily: 'JetBrains Mono,monospace', fontSize: 13, color: 'var(--teal)', wordBreak: 'break-all' }}>{taskId}</div>
+          </div>
 
-      {/* Inline tabs */}
-      <div style={{ display: 'flex', gap: 2, borderBottom: '1px solid var(--border)', marginBottom: 16, marginLeft: -20, marginRight: -20, paddingLeft: 20 }}>
-        {['overview', 'voting', 'deliberation'].map(tab => (
-          <button
-            key={tab}
-            className={`panel-tab${activeTab === tab ? ' active' : ''}`}
-            onClick={() => setActiveTab(tab)}
-          >
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
-          </button>
-        ))}
-      </div>
+          {/* Inline tabs */}
+          <div style={{ display: 'flex', gap: 2, borderBottom: '1px solid var(--border)', marginBottom: 16, marginLeft: -20, marginRight: -20, paddingLeft: 20 }}>
+            {['overview', 'deliberation'].map(tab => (
+              <button
+                key={tab}
+                style={{
+                  padding: '8px 14px', border: 'none',
+                  borderBottom: `2px solid ${activeTab === tab ? 'var(--teal)' : 'transparent'}`,
+                  background: 'transparent',
+                  color: activeTab === tab ? 'var(--teal)' : 'var(--text-muted)',
+                  cursor: 'pointer', fontFamily: 'Syne,sans-serif',
+                  fontSize: 12, fontWeight: 600,
+                }}
+                onClick={() => setActiveTab(tab)}
+              >
+                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              </button>
+            ))}
+          </div>
 
-      {activeTab === 'overview' && (
-        <OverviewTab taskTrace={taskTrace} />
-      )}
-      {activeTab === 'voting' && (
-        <VotingTab taskVoting={taskVoting} taskBallots={taskBallots} />
-      )}
-      {activeTab === 'deliberation' && (
-        <DeliberationTab taskId={taskId} />
-      )}
-    </div>
+          {activeTab === 'overview' && (
+            <OverviewTab taskTrace={null} />
+          )}
+          {activeTab === 'deliberation' && (
+            <DeliberationTab taskId={taskId} />
+          )}
+        </div>
+      </div>
+    </>
   )
 }

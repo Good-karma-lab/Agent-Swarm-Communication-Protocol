@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-cargo build --release -p openswarm-connector >/dev/null
+cargo build --release -p wws-connector >/dev/null
 
 cd tests/playwright
 npm install >/dev/null

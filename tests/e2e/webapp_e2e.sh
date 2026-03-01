@@ -10,7 +10,7 @@ fi
 
 cd "$ROOT_DIR"
 
-TMP_DIR="$(mktemp -d /tmp/openswarm-web-e2e.XXXXXX)"
+TMP_DIR="$(mktemp -d /tmp/wws-web-e2e.XXXXXX)"
 PID=""
 
 cleanup() {
@@ -22,9 +22,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-cargo build --release -p openswarm-connector >/dev/null
+cargo build --release -p wws-connector >/dev/null
 
-./target/release/openswarm-connector \
+./target/release/wws-connector \
   --listen /ip4/127.0.0.1/tcp/22100 \
   --rpc 127.0.0.1:22370 \
   --files-addr 127.0.0.1:22371 \

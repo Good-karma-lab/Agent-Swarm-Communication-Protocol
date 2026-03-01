@@ -1,19 +1,19 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/openswarm-protocol",
-    "crates/openswarm-network",
-    "crates/openswarm-consensus",
-    "crates/openswarm-hierarchy",
-    "crates/openswarm-state",
-    "crates/openswarm-connector",
+    "crates/wws-protocol",
+    "crates/wws-network",
+    "crates/wws-consensus",
+    "crates/wws-hierarchy",
+    "crates/wws-state",
+    "crates/wws-connector",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/Good-karma-lab/OpenSwarm"
+repository = "https://github.com/Good-karma-lab/WorldWideSwarm"
 
 [workspace.dependencies]
 # Serialization
@@ -26,7 +26,10 @@ tokio = { version = "1", features = ["full"] }
 # Cryptography
 ed25519-dalek = { version = "2", features = ["serde", "rand_core"] }
 sha2 = "0.10"
+hex = "0.4"
 rand = "0.8"
+bip39 = "2"
+zeroize = { version = "1", features = ["derive"] }
 
 # Logging
 tracing = "0.1"
@@ -44,15 +47,19 @@ uuid = { version = "1", features = ["v4", "serde"] }
 
 # Config
 toml = "0.8"
+dirs = "6"
 
 # TUI
 ratatui = "0.29"
 crossterm = "0.28"
 
+# DNS
+hickory-resolver = { version = "0.24", features = ["tokio-runtime"] }
+
 # Internal crates
-openswarm-protocol = { path = "crates/openswarm-protocol" }
-openswarm-network = { path = "crates/openswarm-network" }
-openswarm-consensus = { path = "crates/openswarm-consensus" }
-openswarm-hierarchy = { path = "crates/openswarm-hierarchy" }
-openswarm-state = { path = "crates/openswarm-state" }
-openswarm-connector = { path = "crates/openswarm-connector" }
+wws-protocol = { path = "crates/wws-protocol" }
+wws-network = { path = "crates/wws-network" }
+wws-consensus = { path = "crates/wws-consensus" }
+wws-hierarchy = { path = "crates/wws-hierarchy" }
+wws-state = { path = "crates/wws-state" }
+wws-connector = { path = "crates/wws-connector" }

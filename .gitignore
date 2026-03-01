@@ -74,3 +74,6 @@ llama-server.pid
 
 # Zeroclaw temp files
 /tmp/zeroclaw-instructions-*.txt
+
+# Git worktrees
+.worktrees/

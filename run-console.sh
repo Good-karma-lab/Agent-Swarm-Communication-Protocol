@@ -15,10 +15,10 @@ for arg in "$@"; do
     fi
 done
 
-echo "Rebuilding OpenSwarm connector..."
+echo "Rebuilding WorldWideSwarm connector..."
 cargo build --release
 
-cmd=("./target/release/openswarm-connector" "--console")
+cmd=("./target/release/wws-connector" "--console")
 
 if [[ "$agent_name_set" == false ]]; then
     cmd+=("--agent-name" "operator")

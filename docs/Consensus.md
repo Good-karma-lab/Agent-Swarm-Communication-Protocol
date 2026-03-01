@@ -1,4 +1,4 @@
-# Competitive Planning and Consensus
+# WWS Coordination Layer
 
 RFP commit-reveal, IRV voting, critic scores, and recursive cascade.
 

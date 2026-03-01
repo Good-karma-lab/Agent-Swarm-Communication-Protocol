@@ -12,6 +12,12 @@ fi
 
 cd "$ROOT_DIR"
 
+echo "[e2e] Running adversarial tests (replay, PoW, typosquat, guardian)"
+bash "$SCRIPT_DIR/adversarial_tests.sh"
+
+echo "[e2e] Running chaos tests (CRDT, replay window, Levenshtein, key rotation)"
+bash "$SCRIPT_DIR/chaos_tests.sh"
+
 echo "[e2e] Running deterministic connector scenarios"
 bash "$SCRIPT_DIR/connector_scenarios.sh"
 
@@ -19,7 +25,7 @@ echo "[e2e] Running webapp API and task flow scenario"
 bash "$SCRIPT_DIR/webapp_e2e.sh"
 
 echo "[e2e] Running operator console network propagation test"
-cargo test -p openswarm-connector console_inject_task_publishes_to_swarm >/dev/null
+cargo test -p wws-connector console_inject_task_publishes_to_swarm >/dev/null
 
 if [[ "${E2E_LIVE_LLM:-0}" == "1" ]]; then
     echo "[e2e] Running live ZeroClaw + OpenRouter E2E"

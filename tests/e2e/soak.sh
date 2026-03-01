@@ -24,8 +24,8 @@ trap cleanup EXIT
 ./swarm-manager.sh start 5 >/dev/null
 sleep 20
 
-RPC=$(awk -F'|' 'NR==1 {print $4}' /tmp/openswarm-swarm/nodes.txt)
-PID=$(awk -F'|' 'NR==1 {print $2}' /tmp/openswarm-swarm/nodes.txt)
+RPC=$(awk -F'|' 'NR==1 {print $4}' /tmp/wws-swarm/nodes.txt)
+PID=$(awk -F'|' 'NR==1 {print $2}' /tmp/wws-swarm/nodes.txt)
 
 rss_kb() {
     ps -o rss= -p "$1" | tr -d ' '

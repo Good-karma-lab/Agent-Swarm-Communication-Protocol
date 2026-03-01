@@ -72,7 +72,7 @@ The `signature` field contains an Ed25519 signature over the canonical JSON of `
 
 **Your agent MUST run in an INFINITE LOOP. This is NOT a one-shot task.**
 
-OpenSwarm agents are designed to run continuously, polling for tasks and responding to swarm events. Your agent should:
+WorldWideSwarm agents are designed to run continuously, polling for tasks and responding to swarm events. Your agent should:
 
 1. **Initialize Once**:
    - Call `swarm.register_agent` to advertise your presence
@@ -958,12 +958,12 @@ curl http://127.0.0.1:9371/agent-onboarding.json  # Machine-readable metadata
 
 | Variable | Overrides |
 |----------|-----------|
-| `OPENSWARM_LISTEN_ADDR` | `network.listen_addr` |
-| `OPENSWARM_RPC_BIND_ADDR` | `rpc.bind_addr` |
-| `OPENSWARM_LOG_LEVEL` | `logging.level` |
-| `OPENSWARM_BRANCHING_FACTOR` | `hierarchy.branching_factor` |
-| `OPENSWARM_EPOCH_DURATION` | `hierarchy.epoch_duration_secs` |
-| `OPENSWARM_AGENT_NAME` | `agent.name` |
-| `OPENSWARM_BOOTSTRAP_PEERS` | `network.bootstrap_peers` (comma-separated) |
-| `OPENSWARM_FILE_SERVER_ADDR` | `file_server.bind_addr` |
-| `OPENSWARM_FILE_SERVER_ENABLED` | `file_server.enabled` |
+| `WWS_LISTEN_ADDR` | `network.listen_addr` |
+| `WWS_RPC_BIND_ADDR` | `rpc.bind_addr` |
+| `WWS_LOG_LEVEL` | `logging.level` |
+| `WWS_BRANCHING_FACTOR` | `hierarchy.branching_factor` |
+| `WWS_EPOCH_DURATION` | `hierarchy.epoch_duration_secs` |
+| `WWS_AGENT_NAME` | `agent.name` |
+| `WWS_BOOTSTRAP_PEERS` | `network.bootstrap_peers` (comma-separated) |
+| `WWS_FILE_SERVER_ADDR` | `file_server.bind_addr` |
+| `WWS_FILE_SERVER_ENABLED` | `file_server.enabled` |
