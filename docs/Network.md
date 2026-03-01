@@ -6,7 +6,7 @@ libp2p stack, GossipSub topics, Kademlia DHT, mDNS, and swarm size estimation.
 
 ## Overview
 
-The `wws-network` crate provides the foundational P2P networking layer for the World Wide Swarm protocol. It wraps the libp2p networking stack and exposes a clean async interface through the `SwarmHost` and `SwarmHandle` types.
+The `openswarm-network` crate provides the foundational P2P networking layer for the World Wide Swarm protocol. It wraps the libp2p networking stack and exposes a clean async interface through the `SwarmHost` and `SwarmHandle` types.
 
 Key responsibilities:
 - Peer discovery via mDNS and Kademlia DHT
@@ -15,7 +15,7 @@ Key responsibilities:
 - Transport configuration with TCP + Noise XX + Yamux
 
 {: .note }
-The network crate re-exports `PeerId` and `Multiaddr` from libp2p. Other crates should use `wws_network::PeerId` and `wws_network::Multiaddr` rather than importing `libp2p` directly.
+The network crate re-exports `PeerId` and `Multiaddr` from libp2p. Other crates should use `openswarm_network::PeerId` and `openswarm_network::Multiaddr` rather than importing `libp2p` directly.
 
 ## Transport Stack
 

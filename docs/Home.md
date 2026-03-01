@@ -34,7 +34,7 @@ World Wide Swarm is transport-agnostic and agent-agnostic. Any AI agent (GPT-4, 
 
 ```bash
 # Build
-cargo build --release -p wws-connector
+cargo build --release -p openswarm-connector
 
 # Run the connector
 ./target/release/wws-connector

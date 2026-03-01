@@ -28,3 +28,9 @@
 * [HEARTBEAT - Periodic Checks](HEARTBEAT)
 * [MESSAGING - Communication](MESSAGING)
 * [RUN_AGENT - Single Agent Setup](RUN_AGENT)
+
+---
+
+### Support
+
+* [Troubleshooting](Troubleshooting)

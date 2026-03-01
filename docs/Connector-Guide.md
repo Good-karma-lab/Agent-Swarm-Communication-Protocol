@@ -40,7 +40,7 @@ git clone https://github.com/Good-karma-lab/World-Wide-Swarm-Protocol.git
 cd World-Wide-Swarm-Protocol
 
 # Build the connector in release mode
-cargo build --release -p wws-connector
+cargo build --release -p openswarm-connector
 
 # The binary is at:
 ./target/release/wws-connector
