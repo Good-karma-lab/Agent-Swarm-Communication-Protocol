@@ -1890,6 +1890,38 @@ pub(crate) async fn handle_inject_task(
         }
     };
 
+    // Reputation gate: require a registered agent with at least 1 completed task.
+    let injector_agent_id = params
+        .get("injector_agent_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    {
+        let s = state.read().await;
+        match &injector_agent_id {
+            None => {
+                return SwarmResponse::error(
+                    id,
+                    -32602,
+                    "Missing 'injector_agent_id': only registered agents with good standing can inject tasks".into(),
+                );
+            }
+            Some(agent_id) => {
+                if !s.has_inject_reputation(agent_id) {
+                    return SwarmResponse::error(
+                        id,
+                        -32000,
+                        format!(
+                            "Insufficient reputation: agent '{}' must complete at least {} task(s) before injecting",
+                            agent_id,
+                            crate::connector::MIN_INJECT_TASKS_COMPLETED
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
     let mut state_guard = state.write().await;
     let epoch = state_guard.epoch_manager.current_epoch();
     let mut task = openswarm_protocol::Task::new(description.clone(), 1, epoch);

@@ -80,6 +80,7 @@ pub struct AgentActivity {
     pub plans_proposed_count: u64,
     pub plans_revealed_count: u64,
     pub votes_cast_count: u64,
+    pub tasks_injected_count: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -198,7 +199,22 @@ pub struct ConnectorState {
     pub name_registry: std::collections::HashMap<String, String>,
 }
 
+/// Minimum tasks an agent must have completed to inject tasks into the swarm.
+pub const MIN_INJECT_TASKS_COMPLETED: u64 = 1;
+
 impl ConnectorState {
+    /// Returns true if the given agent_id has sufficient reputation to inject tasks.
+    /// The local agent (self) is always allowed.
+    pub fn has_inject_reputation(&self, agent_id: &str) -> bool {
+        if self.agent_id.to_string() == agent_id {
+            return true;
+        }
+        self.agent_activity
+            .get(agent_id)
+            .map(|a| a.tasks_processed_count >= MIN_INJECT_TASKS_COMPLETED)
+            .unwrap_or(false)
+    }
+
     /// Push a log entry, capping the log at 1000 entries.
     pub fn push_log(&mut self, category: LogCategory, message: String) {
         if self.event_log.len() >= 1000 {
@@ -2909,6 +2925,95 @@ impl Clone for OpenSwarmConnector {
 }
 
 #[cfg(test)]
+impl ConnectorState {
+    /// Build a minimal ConnectorState for unit tests (no networking required).
+    pub fn new_for_test() -> Self {
+        let agent_id = AgentId::new("did:swarm:test-self".to_string());
+        let current_swarm_id = SwarmId::new("test-swarm".to_string());
+        let mut known_swarms = std::collections::HashMap::new();
+        known_swarms.insert(
+            current_swarm_id.as_str().to_string(),
+            SwarmRecord {
+                swarm_id: current_swarm_id.clone(),
+                name: "test".to_string(),
+                is_public: true,
+                agent_count: 1,
+                joined: true,
+                last_seen: chrono::Utc::now(),
+            },
+        );
+        ConnectorState {
+            agent_id: agent_id.clone(),
+            status: ConnectorStatus::Running,
+            epoch_manager: EpochManager::default(),
+            pyramid: PyramidAllocator::new(PyramidConfig::default()),
+            election: None,
+            geo_cluster: GeoCluster::default(),
+            succession: SuccessionManager::new(),
+            rfp_coordinators: std::collections::HashMap::new(),
+            voting_engines: std::collections::HashMap::new(),
+            cascade: CascadeEngine::new(),
+            task_set: OrSet::new(agent_id.to_string()),
+            task_details: std::collections::HashMap::new(),
+            task_timelines: std::collections::HashMap::new(),
+            agent_set: OrSet::new(agent_id.to_string()),
+            member_set: OrSet::new(agent_id.to_string()),
+            member_last_seen: {
+                let mut m = std::collections::HashMap::new();
+                m.insert(agent_id.to_string(), chrono::Utc::now());
+                m
+            },
+            agent_names: {
+                let mut m = std::collections::HashMap::new();
+                m.insert(agent_id.to_string(), "test-self".to_string());
+                m
+            },
+            agent_activity: {
+                let mut m = std::collections::HashMap::new();
+                m.insert(agent_id.to_string(), AgentActivity::default());
+                m
+            },
+            task_vote_requirements: std::collections::HashMap::new(),
+            member_last_task_poll: std::collections::HashMap::new(),
+            member_last_result: std::collections::HashMap::new(),
+            task_result_text: std::collections::HashMap::new(),
+            pending_plan_reveals: std::collections::HashMap::new(),
+            merkle_dag: MerkleDag::new(),
+            content_store: ContentStore::new(),
+            granularity: GranularityAlgorithm::default(),
+            my_tier: Tier::Executor,
+            parent_id: None,
+            agent_tiers: std::collections::HashMap::new(),
+            agent_parents: std::collections::HashMap::new(),
+            current_layout: None,
+            subordinates: std::collections::HashMap::new(),
+            task_results: std::collections::HashMap::new(),
+            network_stats: NetworkStats {
+                total_agents: 1,
+                hierarchy_depth: 1,
+                branching_factor: 3,
+                current_epoch: 1,
+                my_tier: Tier::Executor,
+                subordinate_count: 0,
+                parent_id: None,
+            },
+            event_log: Vec::new(),
+            message_trace: Vec::new(),
+            start_time: chrono::Utc::now(),
+            current_swarm_id,
+            known_swarms,
+            swarm_token: None,
+            active_holons: std::collections::HashMap::new(),
+            deliberation_messages: std::collections::HashMap::new(),
+            ballot_records: std::collections::HashMap::new(),
+            irv_rounds: std::collections::HashMap::new(),
+            board_acceptances: std::collections::HashMap::new(),
+            name_registry: std::collections::HashMap::new(),
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -3043,5 +3148,40 @@ mod tests {
             s.event_log.iter().any(|e| e.message.contains("WWS.Connector started")),
             "Should have startup log entry"
         );
+    }
+
+    #[test]
+    fn test_has_inject_reputation_unknown_agent() {
+        let state = ConnectorState::new_for_test();
+        assert!(!state.has_inject_reputation("did:swarm:unknown"));
+    }
+
+    #[test]
+    fn test_has_inject_reputation_self_always_allowed() {
+        let state = ConnectorState::new_for_test();
+        let self_id = state.agent_id.to_string();
+        assert!(state.has_inject_reputation(&self_id));
+    }
+
+    #[test]
+    fn test_has_inject_reputation_agent_with_completed_task() {
+        let mut state = ConnectorState::new_for_test();
+        let agent_id = "did:swarm:test-agent-001".to_string();
+        state.agent_activity.insert(agent_id.clone(), AgentActivity {
+            tasks_processed_count: 1,
+            ..Default::default()
+        });
+        assert!(state.has_inject_reputation(&agent_id));
+    }
+
+    #[test]
+    fn test_has_inject_reputation_agent_with_no_completed_tasks() {
+        let mut state = ConnectorState::new_for_test();
+        let agent_id = "did:swarm:test-agent-002".to_string();
+        state.agent_activity.insert(agent_id.clone(), AgentActivity {
+            tasks_processed_count: 0,
+            ..Default::default()
+        });
+        assert!(!state.has_inject_reputation(&agent_id));
     }
 }

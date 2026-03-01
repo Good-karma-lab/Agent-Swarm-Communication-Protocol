@@ -500,6 +500,8 @@ async fn api_tasks(State(web): State<WebState>) -> Json<serde_json::Value> {
 #[derive(Deserialize)]
 struct TaskSubmitRequest {
     description: String,
+    #[serde(default)]
+    injector_agent_id: Option<String>,
 }
 
 async fn api_submit_task(
@@ -529,7 +531,33 @@ async fn api_submit_task(
         );
     }
 
-    let params = serde_json::json!({ "description": req.description });
+    let injector_agent_id = req.injector_agent_id.clone().unwrap_or_default();
+    if injector_agent_id.is_empty() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "ok": false,
+                "error": "forbidden: provide injector_agent_id — only agents with good standing can submit tasks"
+            })),
+        );
+    }
+    {
+        let s = web.state.read().await;
+        if !s.has_inject_reputation(&injector_agent_id) {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({
+                    "ok": false,
+                    "error": format!("insufficient_reputation: agent '{}' must complete at least 1 task first", injector_agent_id)
+                })),
+            );
+        }
+    }
+
+    let params = serde_json::json!({
+        "description": req.description,
+        "injector_agent_id": injector_agent_id,
+    });
     let response = crate::rpc_server::handle_inject_task(
         Some("web-submit-task".to_string()),
         &params,
