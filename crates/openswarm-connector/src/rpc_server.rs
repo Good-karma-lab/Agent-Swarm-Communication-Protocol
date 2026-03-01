@@ -139,6 +139,20 @@ async fn process_request(
 
     let request_id = request.id.clone();
 
+    // Optional per-session RPC token check.
+    if let Ok(required_token) = std::env::var("OPENSWARM_RPC_TOKEN") {
+        if !required_token.trim().is_empty() {
+            let provided = request.params.get("rpc_token").and_then(|v| v.as_str()).unwrap_or("");
+            if provided != required_token.trim() {
+                return SwarmResponse::error(
+                    request_id.clone(),
+                    -32001,
+                    "Unauthorized: invalid or missing rpc_token".into(),
+                );
+            }
+        }
+    }
+
     match request.method.as_str() {
         "swarm.connect" => handle_connect(request_id, &request.params, network_handle).await,
         "swarm.get_network_stats" => handle_get_network_stats(request_id, state).await,
@@ -1900,6 +1914,10 @@ pub(crate) async fn handle_inject_task(
         }
     };
 
+    if description.len() > 4096 {
+        return SwarmResponse::error(id, -32602, "Task description too long (max 4096 chars)".into());
+    }
+
     // Reputation gate: require a registered agent with at least 1 completed task.
     let injector_agent_id = params
         .get("injector_agent_id")
@@ -1920,15 +1938,31 @@ pub(crate) async fn handle_inject_task(
                 if !s.has_inject_reputation(agent_id) {
                     return SwarmResponse::error(
                         id,
-                        -32000,
+                        -32003,
                         format!(
-                            "Insufficient reputation: agent '{}' must complete at least {} task(s) before injecting",
+                            "insufficient_reputation: agent '{}' needs {} completed tasks to inject",
                             agent_id,
                             crate::connector::MIN_INJECT_TASKS_COMPLETED
                         ),
                     );
                 }
             }
+        }
+    }
+
+    // Rate limit check.
+    {
+        let agent_id_for_rate = injector_agent_id.as_deref().unwrap_or("");
+        let mut s = state.write().await;
+        if !s.check_and_update_inject_rate_limit(agent_id_for_rate) {
+            return SwarmResponse::error(
+                id,
+                -32029,
+                format!(
+                    "rate_limited: agent '{}' has exceeded the task injection rate limit (max 10 per 60s)",
+                    agent_id_for_rate
+                ),
+            );
         }
     }
 

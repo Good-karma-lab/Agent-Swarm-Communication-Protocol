@@ -115,6 +115,12 @@ impl FileServer {
             .fallback(spa_index)
             .with_state(web_state);
 
+        if std::env::var("OPENSWARM_WEB_TOKEN").unwrap_or_default().trim().is_empty() {
+            tracing::warn!(
+                "OPENSWARM_WEB_TOKEN is not set — task injection via HTTP is unauthenticated. \
+                Set this env var to require a token for POST /api/tasks."
+            );
+        }
         let listener = tokio::net::TcpListener::bind(&self.bind_addr).await?;
         tracing::info!(
             addr = %self.bind_addr,
@@ -195,12 +201,13 @@ async fn onboarding() -> Json<serde_json::Value> {
         "dashboard": "/",
         "methods": [
             "swarm.get_status",
+            "swarm.register_agent",
             "swarm.receive_task",
             "swarm.get_task",
             "swarm.get_task_timeline",
-            "swarm.register_agent",
             "swarm.propose_plan",
             "swarm.submit_vote",
+            "swarm.submit_critique",
             "swarm.get_voting_state",
             "swarm.submit_result",
             "swarm.connect",
@@ -209,13 +216,21 @@ async fn onboarding() -> Json<serde_json::Value> {
             "swarm.get_hierarchy",
             "swarm.list_swarms",
             "swarm.create_swarm",
-            "swarm.join_swarm"
+            "swarm.join_swarm",
+            "swarm.get_board_status",
+            "swarm.get_deliberation",
+            "swarm.get_ballots",
+            "swarm.get_irv_rounds",
+            "swarm.register_name",
+            "swarm.resolve_name",
+            "swarm.send_message",
+            "swarm.get_messages"
         ]
     }))
 }
 
 async fn api_health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({"ok": true, "service": "openswarm-web"}))
+    Json(serde_json::json!({"ok": true, "service": "wws-connector", "version": env!("CARGO_PKG_VERSION")}))
 }
 
 async fn api_auth_status() -> Json<serde_json::Value> {
@@ -685,12 +700,12 @@ async fn api_agents(State(web): State<WebState>) -> Json<serde_json::Value> {
 
             let activity = s.agent_activity.get(&id);
             let tasks_processed = activity.map(|a| a.tasks_processed_count).unwrap_or(0);
-            let reputation = (tasks_processed as f64 / 10.0_f64).min(1.0);
+            let reputation = tasks_processed as f64 / 10.0_f64;
             let uptime = seen_secs.map(|v| if v <= 45 { 1.0_f64 } else { (45.0 / v as f64).min(1.0) }).unwrap_or(0.0);
             // Composite score: 0.25*PoC_stub + 0.40*reputation + 0.20*uptime + 0.15*stake_stub
             let reputation_score = (0.25_f64 * 0.5 + 0.40 * reputation + 0.20 * uptime) * 100.0 / 100.0;
             let reputation_score = (reputation_score * 100.0).round() / 100.0;
-            let can_inject_tasks = id == s.agent_id.to_string() || tasks_processed >= 1;
+            let can_inject_tasks = id == s.agent_id.to_string() || tasks_processed >= 5;
             // The self-agent is always connected — GossipSub doesn't echo messages
             // back to the sender, so seen_secs is unreliable for the local agent.
             let is_self = id == s.agent_id.to_string();

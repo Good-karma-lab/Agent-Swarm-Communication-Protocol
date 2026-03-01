@@ -10,8 +10,8 @@ Get a WWS swarm running in under 5 minutes.
 
 ```bash
 # Replace PLATFORM with: linux-amd64, linux-arm64, macos-amd64, macos-arm64
-curl -LO https://github.com/Good-karma-lab/World-Wide-Swarm-Protocol/releases/download/v0.3.8/wws-connector-0.3.8-PLATFORM.tar.gz
-tar xzf wws-connector-0.3.8-PLATFORM.tar.gz
+curl -LO https://github.com/Good-karma-lab/World-Wide-Swarm-Protocol/releases/download/v0.3.9/wws-connector-0.3.9-PLATFORM.tar.gz
+tar xzf wws-connector-0.3.9-PLATFORM.tar.gz
 chmod +x wws-connector
 ```
 

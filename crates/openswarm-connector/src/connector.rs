@@ -208,10 +208,12 @@ pub struct ConnectorState {
     pub name_registry: std::collections::HashMap<String, String>,
     /// Inbox of direct messages received from other agents.
     pub inbox: Vec<InboxMessage>,
+    /// Per-agent last inject timestamps for rate limiting (max 10 per 60s).
+    pub inject_rate_limiter: std::collections::HashMap<String, Vec<chrono::DateTime<chrono::Utc>>>,
 }
 
 /// Minimum tasks an agent must have completed to inject tasks into the swarm.
-pub const MIN_INJECT_TASKS_COMPLETED: u64 = 1;
+pub const MIN_INJECT_TASKS_COMPLETED: u64 = 5;
 
 impl ConnectorState {
     /// Returns true if the given agent_id has sufficient reputation to inject tasks.
@@ -224,6 +226,24 @@ impl ConnectorState {
             .get(agent_id)
             .map(|a| a.tasks_processed_count >= MIN_INJECT_TASKS_COMPLETED)
             .unwrap_or(false)
+    }
+
+    /// Check and update rate limit for task injection.
+    /// Returns true if the agent is within the rate limit (max 10 injections per 60 seconds).
+    pub fn check_and_update_inject_rate_limit(&mut self, agent_id: &str) -> bool {
+        let now = chrono::Utc::now();
+        let window = chrono::Duration::seconds(60);
+        let max_per_window: usize = 10;
+        let timestamps = self.inject_rate_limiter
+            .entry(agent_id.to_string())
+            .or_insert_with(Vec::new);
+        // Remove timestamps older than the window
+        timestamps.retain(|&t| now - t < window);
+        if timestamps.len() >= max_per_window {
+            return false;
+        }
+        timestamps.push(now);
+        true
     }
 
     /// Push a log entry, capping the log at 1000 entries.
@@ -515,6 +535,7 @@ impl OpenSwarmConnector {
             board_acceptances: std::collections::HashMap::new(),
             name_registry: std::collections::HashMap::new(),
             inbox: Vec::new(),
+            inject_rate_limiter: std::collections::HashMap::new(),
         };
 
         Ok(Self {
@@ -3049,6 +3070,7 @@ impl ConnectorState {
             board_acceptances: std::collections::HashMap::new(),
             name_registry: std::collections::HashMap::new(),
             inbox: Vec::new(),
+            inject_rate_limiter: std::collections::HashMap::new(),
         }
     }
 }
@@ -3208,7 +3230,7 @@ mod tests {
         let mut state = ConnectorState::new_for_test();
         let agent_id = "did:swarm:test-agent-001".to_string();
         state.agent_activity.insert(agent_id.clone(), AgentActivity {
-            tasks_processed_count: 1,
+            tasks_processed_count: 5,
             ..Default::default()
         });
         assert!(state.has_inject_reputation(&agent_id));
@@ -3260,5 +3282,15 @@ mod tests {
             });
         }
         assert_eq!(state.inbox.len(), 5);
+    }
+
+    #[test]
+    fn test_inject_rate_limit_allows_up_to_10() {
+        let mut state = ConnectorState::new_for_test();
+        let agent_id = "did:swarm:ratelimit-agent";
+        for _ in 0..10 {
+            assert!(state.check_and_update_inject_rate_limit(agent_id));
+        }
+        assert!(!state.check_and_update_inject_rate_limit(agent_id));
     }
 }
