@@ -1,6 +1,6 @@
 [package]
 name = "openswarm-network"
-description = "P2P networking layer using libp2p for ASIP"
+description = "P2P networking layer using libp2p for WWS"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,4 +1,4 @@
-//! CLI binary entry point for the ASIP.Connector sidecar.
+//! CLI binary entry point for the WWS.Connector sidecar.
 //!
 //! Usage:
 //!   openswarm-connector [OPTIONS]
@@ -169,7 +169,7 @@ async fn main() -> anyhow::Result<()> {
         swarm_public = config.swarm.is_public,
         files_server = %config.file_server.bind_addr,
         files_enabled = config.file_server.enabled,
-        "Starting ASIP.Connector"
+        "Starting WWS.Connector"
     );
 
     // Create the connector.

@@ -8,6 +8,22 @@ function healthLabel(a) {
   return { text: 'HEALTHY', cls: 'badge-teal' }
 }
 
+function ReputationBar({ score }) {
+  const pct = Math.round((score || 0) * 100)
+  const color = pct >= 60 ? 'var(--teal)' : pct >= 30 ? '#ffaa00' : 'var(--coral)'
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Reputation Score</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color, fontFamily: 'var(--font-mono)' }}>{pct}%</span>
+      </div>
+      <div style={{ background: 'var(--border)', borderRadius: 4, height: 6, overflow: 'hidden' }}>
+        <div style={{ width: `${pct}%`, background: color, height: '100%', borderRadius: 4, transition: 'width 0.4s ease' }} />
+      </div>
+    </div>
+  )
+}
+
 export default function AgentDetailPanel({ agent, tasks, onTaskClick }) {
   if (!agent) return null
   const health = healthLabel(agent)
@@ -18,11 +34,26 @@ export default function AgentDetailPanel({ agent, tasks, onTaskClick }) {
   return (
     <div>
       {/* Header meta */}
-      <div className="detail-meta" style={{ marginBottom: 20 }}>
+      <div className="detail-meta" style={{ marginBottom: 16 }}>
         <span>ID: <strong>{scrub(agent.agent_id)}</strong></span>
         <span>Name: <strong>{scrub(agent.name)}</strong></span>
         <span>Tier: <strong>{agent.tier}</strong></span>
         <span className={`badge ${health.cls}`}>{health.text}</span>
+        {agent.can_inject_tasks
+          ? <span className="badge badge-teal" title="Can submit tasks to the swarm">✓ Can inject tasks</span>
+          : <span className="badge badge-amber" title="Must complete at least 1 task first">⚠ No inject rights</span>
+        }
+      </div>
+
+      {/* Reputation */}
+      <div className="detail-section">
+        <div className="detail-section-title">Reputation</div>
+        <ReputationBar score={agent.reputation_score} />
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+          Composite score: 0.25×PoC + 0.40×task_success + 0.20×uptime + 0.15×stake<br />
+          Task success rate: {Math.min(100, Math.round((agent.tasks_processed_count ?? 0) * 10))}%
+          ({agent.tasks_processed_count ?? 0} / 10 tasks for full score)
+        </div>
       </div>
 
       {/* Stats */}

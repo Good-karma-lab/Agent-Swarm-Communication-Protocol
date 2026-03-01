@@ -654,6 +654,14 @@ async fn api_agents(State(web): State<WebState>) -> Json<serde_json::Value> {
                 .and_then(|ts| now.signed_duration_since(*ts).to_std().ok())
                 .map(|d| d.as_secs());
 
+            let activity = s.agent_activity.get(&id);
+            let tasks_processed = activity.map(|a| a.tasks_processed_count).unwrap_or(0);
+            let reputation = (tasks_processed as f64 / 10.0_f64).min(1.0);
+            let uptime = seen_secs.map(|v| if v <= 45 { 1.0_f64 } else { (45.0 / v as f64).min(1.0) }).unwrap_or(0.0);
+            // Composite score: 0.25*PoC_stub + 0.40*reputation + 0.20*uptime + 0.15*stake_stub
+            let reputation_score = (0.25_f64 * 0.5 + 0.40 * reputation + 0.20 * uptime) * 100.0 / 100.0;
+            let reputation_score = (reputation_score * 100.0).round() / 100.0;
+            let can_inject_tasks = id == s.agent_id.to_string() || tasks_processed >= 1;
             serde_json::json!({
                 "agent_id": id,
                 "name": s.agent_names.get(&id).cloned().unwrap_or_else(|| short_agent_label(&id)),
@@ -661,11 +669,13 @@ async fn api_agents(State(web): State<WebState>) -> Json<serde_json::Value> {
                 "seen_secs": seen_secs,
                 "last_task_poll_secs": last_task_poll_secs,
                 "last_result_secs": last_result_secs,
-                "tasks_assigned_count": s.agent_activity.get(&id).map(|a| a.tasks_assigned_count).unwrap_or(0),
-                "tasks_processed_count": s.agent_activity.get(&id).map(|a| a.tasks_processed_count).unwrap_or(0),
-                "plans_proposed_count": s.agent_activity.get(&id).map(|a| a.plans_proposed_count).unwrap_or(0),
-                "plans_revealed_count": s.agent_activity.get(&id).map(|a| a.plans_revealed_count).unwrap_or(0),
-                "votes_cast_count": s.agent_activity.get(&id).map(|a| a.votes_cast_count).unwrap_or(0),
+                "tasks_assigned_count": activity.map(|a| a.tasks_assigned_count).unwrap_or(0),
+                "tasks_processed_count": tasks_processed,
+                "plans_proposed_count": activity.map(|a| a.plans_proposed_count).unwrap_or(0),
+                "plans_revealed_count": activity.map(|a| a.plans_revealed_count).unwrap_or(0),
+                "votes_cast_count": activity.map(|a| a.votes_cast_count).unwrap_or(0),
+                "reputation_score": reputation_score,
+                "can_inject_tasks": can_inject_tasks,
                 "is_self": id == s.agent_id.to_string(),
                 "connected": seen_secs.map(|v| v <= 60).unwrap_or(false),
                 "loop_active": last_task_poll_secs.map(|v| v <= 120).unwrap_or(false),
@@ -710,12 +720,23 @@ async fn api_topology(State(web): State<WebState>) -> Json<serde_json::Value> {
         })
         .collect::<Vec<_>>();
 
-    nodes.push(serde_json::json!({
-        "id": "zero0",
-        "name": "zero0",
-        "tier": "Root",
-        "is_self": false,
-    }));
+    // Count Tier1 agents — only show the virtual root node when there are multiple Tier1 agents.
+    let tier1_agents: Vec<&String> = s
+        .agent_tiers
+        .iter()
+        .filter(|(id, tier)| **tier == Tier::Tier1 && members.iter().any(|m| m == *id))
+        .map(|(id, _)| id)
+        .collect();
+
+    let show_root = tier1_agents.len() > 1;
+    if show_root {
+        nodes.push(serde_json::json!({
+            "id": "zero0",
+            "name": "WWS",
+            "tier": "Root",
+            "is_self": false,
+        }));
+    }
 
     let mut edges = s
         .agent_parents
@@ -725,8 +746,8 @@ async fn api_topology(State(web): State<WebState>) -> Json<serde_json::Value> {
         })
         .collect::<Vec<_>>();
 
-    for (id, tier) in &s.agent_tiers {
-        if *tier == Tier::Tier1 && members.iter().any(|m| m == id) {
+    if show_root {
+        for id in &tier1_agents {
             edges.push(serde_json::json!({
                 "source": "zero0",
                 "target": id,

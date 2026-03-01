@@ -8,7 +8,7 @@ export default function Header({ agents, tasks, live, onSubmitClick, onAuditClic
 
   return (
     <header className="header">
-      <span className="header-brand">ASIP</span>
+      <span className="header-brand">WWS</span>
 
       <div className="header-stats">
         <div className="header-stat">

@@ -346,7 +346,7 @@ impl ConnectorState {
     }
 }
 
-/// The main ASIP.Connector that orchestrates all subsystems.
+/// The main WWS.Connector that orchestrates all subsystems.
 ///
 /// Created from a configuration, it initializes the network, hierarchy,
 /// consensus, and state modules, then runs the event loop that ties
@@ -546,13 +546,13 @@ impl OpenSwarmConnector {
             state.push_log(
                 LogCategory::System,
                 format!(
-                    "ASIP.Connector started (swarm: {} [{}])",
+                    "WWS.Connector started (swarm: {} [{}])",
                     self.config.swarm.name, swarm_id_str
                 ),
             );
         }
 
-        tracing::info!("ASIP.Connector is running");
+        tracing::info!("WWS.Connector is running");
 
         // Take the event receiver out of self so we can use both in the loop.
         let mut event_rx = self
@@ -3040,7 +3040,7 @@ mod tests {
             "Connector should be Running after start"
         );
         assert!(
-            s.event_log.iter().any(|e| e.message.contains("ASIP.Connector started")),
+            s.event_log.iter().any(|e| e.message.contains("WWS.Connector started")),
             "Should have startup log entry"
         );
     }
