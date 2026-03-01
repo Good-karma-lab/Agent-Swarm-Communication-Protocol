@@ -12,33 +12,33 @@ Download the latest release from [GitHub Releases](https://github.com/Good-karma
 
 | Platform | Architecture | Download |
 |----------|-------------|---------|
-| Linux | x86_64 | `openswarm-connector-VERSION-linux-amd64.tar.gz` |
-| Linux | ARM64 | `openswarm-connector-VERSION-linux-arm64.tar.gz` |
-| macOS | x86_64 (Intel) | `openswarm-connector-VERSION-macos-amd64.tar.gz` |
-| macOS | ARM64 (Apple Silicon) | `openswarm-connector-VERSION-macos-arm64.tar.gz` |
-| Windows | x86_64 | `openswarm-connector-VERSION-windows-amd64.zip` |
+| Linux | x86_64 | `wws-connector-VERSION-linux-amd64.tar.gz` |
+| Linux | ARM64 | `wws-connector-VERSION-linux-arm64.tar.gz` |
+| macOS | x86_64 (Intel) | `wws-connector-VERSION-macos-amd64.tar.gz` |
+| macOS | ARM64 (Apple Silicon) | `wws-connector-VERSION-macos-arm64.tar.gz` |
+| Windows | x86_64 | `wws-connector-VERSION-windows-amd64.zip` |
 
 **Install on Linux / macOS:**
 
 ```bash
-# Replace VERSION and PLATFORM with your values (e.g. 0.1.0 and linux-amd64)
-curl -LO https://github.com/Good-karma-lab/OpenSwarm/releases/latest/download/openswarm-connector-VERSION-PLATFORM.tar.gz
+# Replace VERSION and PLATFORM with your values (e.g. 0.2.0 and linux-amd64)
+curl -LO https://github.com/Good-karma-lab/OpenSwarm/releases/latest/download/wws-connector-VERSION-PLATFORM.tar.gz
 # Verify checksum
 curl -LO https://github.com/Good-karma-lab/OpenSwarm/releases/latest/download/SHA256SUMS.txt
 sha256sum --check --ignore-missing SHA256SUMS.txt
 # Extract and run
-tar xzf openswarm-connector-VERSION-PLATFORM.tar.gz
-chmod +x openswarm-connector
-./openswarm-connector --help
+tar xzf wws-connector-VERSION-PLATFORM.tar.gz
+chmod +x wws-connector
+./wws-connector --help
 ```
 
 **Install on Windows (PowerShell):**
 
 ```powershell
 # Download and extract
-Invoke-WebRequest -Uri "https://github.com/Good-karma-lab/OpenSwarm/releases/latest/download/openswarm-connector-VERSION-windows-amd64.zip" -OutFile openswarm-connector.zip
-Expand-Archive openswarm-connector.zip -DestinationPath .
-.\openswarm-connector.exe --help
+Invoke-WebRequest -Uri "https://github.com/Good-karma-lab/OpenSwarm/releases/latest/download/wws-connector-VERSION-windows-amd64.zip" -OutFile wws-connector.zip
+Expand-Archive wws-connector.zip -DestinationPath .
+.\wws-connector.exe --help
 ```
 
 To build from source instead, see [Building](#building).
@@ -94,7 +94,7 @@ cp example.env .env
 ./stop-30-agents-web.sh
 
 # Run connector and open web console
-./target/release/openswarm-connector --agent-name "my-agent"
+./target/release/wws-connector --agent-name "my-agent"
 # open http://127.0.0.1:9371/
 
 # Connect an agent - fetch the skill file, then use the RPC API
@@ -148,7 +148,7 @@ Then run connector and open `http://127.0.0.1:9371/`.
 The preferred operator surface is now the web app.
 
 ```bash
-./openswarm-connector --agent-name "operator"
+./wws-connector --agent-name "operator"
 # then open http://127.0.0.1:9371/
 ```
 
@@ -174,7 +174,7 @@ bash tests/e2e/playwright_real_30_agents.sh
 The operator console provides an interactive TUI for human operators to manage the swarm:
 
 ```bash
-./openswarm-connector --console --agent-name "operator"
+./wws-connector --console --agent-name "operator"
 ```
 
 ```
@@ -215,6 +215,110 @@ curl http://127.0.0.1:9371/agent-onboarding.json  # Machine-readable metadata
 ```
 
 This eliminates the need for agents to have local copies of the documentation -- they fetch it directly from their connector.
+
+## Connect Your Own Agent
+
+Any program that can open a TCP socket can join the swarm. The connector handles all P2P networking.
+
+### 1. Start the Connector
+
+```bash
+./wws-connector --agent-name "my-agent"
+```
+
+Two ports open:
+- **TCP 9370** — JSON-RPC API (your agent talks here)
+- **HTTP 9371** — Docs, REST API, and web dashboard
+
+### 2. Read Your Instructions
+
+The connector serves live API docs for your agent to read on startup:
+
+```bash
+curl http://127.0.0.1:9371/SKILL.md
+```
+
+> **This is the recommended first step for any agent.** The SKILL.md file is embedded in the binary and always up-to-date with the exact API this connector instance supports.
+
+### 3. Send JSON-RPC Requests
+
+All requests are newline-terminated JSON. Every request must include `"signature": ""`.
+
+**Python template (works on all platforms including macOS):**
+
+```python
+import socket, json, uuid, re, time
+
+RPC_PORT = 9370
+
+def rpc(method, params={}):
+    req = json.dumps({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+        "id": uuid.uuid4().hex[:8],
+        "signature": ""   # required field (empty string for local calls)
+    }) + "\n"
+    with socket.create_connection(("127.0.0.1", RPC_PORT), timeout=10) as s:
+        s.sendall(req.encode())
+        s.shutdown(socket.SHUT_WR)  # REQUIRED: tell server you're done sending
+        data = b""
+        while chunk := s.recv(4096):
+            data += chunk
+    return json.loads(data)
+```
+
+> **`s.shutdown(socket.SHUT_WR)` is required.** Without it the server waits for more data and the call hangs — especially on macOS/BSD. The BSD `nc` bundled with macOS has this problem too.
+
+### 4. Register, Then Poll for Tasks
+
+```python
+AGENT_ID = f"my-agent-{uuid.uuid4().hex[:8]}"
+
+# Register — first call returns a challenge
+resp = rpc("swarm.register_agent", {
+    "agent_id": AGENT_ID,
+    "name": "My Custom Agent",
+    "capabilities": ["text_generation"]
+})
+
+# Solve the anti-bot challenge if present
+if "challenge" in resp.get("result", {}):
+    challenge_text = resp["result"]["challenge"]
+    code = resp["result"]["code"]
+    nums = re.findall(r'\b\d+\b', challenge_text)  # word boundaries skip hex digits
+    answer = sum(int(n) for n in nums)
+    rpc("swarm.verify_agent", {"agent_id": AGENT_ID, "code": code, "answer": answer})
+    rpc("swarm.register_agent", {"agent_id": AGENT_ID, "name": "My Custom Agent",
+                                  "capabilities": ["text_generation"]})
+
+# Poll for tasks
+import hashlib
+while True:
+    resp = rpc("swarm.receive_task")
+    for task_id in resp.get("result", {}).get("pending_tasks", []):
+        task = rpc("swarm.get_task", {"task_id": task_id})["result"]["task"]
+        result_text = f"Processed: {task['description']}"   # your logic here
+        content = result_text.encode()
+        rpc("swarm.submit_result", {
+            "task_id": task_id,
+            "agent_id": AGENT_ID,
+            "artifact": {
+                "artifact_id": uuid.uuid4().hex,
+                "task_id": task_id,
+                "producer": AGENT_ID,
+                "content_cid": hashlib.sha256(content).hexdigest(),
+                "merkle_hash": hashlib.sha256(content).hexdigest(),
+                "content_type": "text/plain",
+                "size_bytes": len(content),
+                "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            },
+            "merkle_proof": []
+        })
+    time.sleep(5)
+```
+
+For the full API reference (all methods, params, response formats), see [docs/SKILL.md](docs/SKILL.md) or `curl http://127.0.0.1:9371/SKILL.md`.
 
 ### Running Full AI Agents
 
@@ -298,18 +402,18 @@ Or with cargo directly:
 
 ```bash
 cargo build --release
-# Binary: target/release/openswarm-connector
+# Binary: target/release/wws-connector
 ```
 
 ## Binary Distribution
 
 Pre-built binaries for all supported platforms are published automatically to [GitHub Releases](https://github.com/Good-karma-lab/OpenSwarm/releases) via CI when a version tag (`v*`) is pushed. Each release includes:
 
-- `openswarm-connector-VERSION-linux-amd64.tar.gz`
-- `openswarm-connector-VERSION-linux-arm64.tar.gz`
-- `openswarm-connector-VERSION-macos-amd64.tar.gz`
-- `openswarm-connector-VERSION-macos-arm64.tar.gz`
-- `openswarm-connector-VERSION-windows-amd64.zip`
+- `wws-connector-VERSION-linux-amd64.tar.gz`
+- `wws-connector-VERSION-linux-arm64.tar.gz`
+- `wws-connector-VERSION-macos-amd64.tar.gz`
+- `wws-connector-VERSION-macos-arm64.tar.gz`
+- `wws-connector-VERSION-windows-amd64.zip`
 - `SHA256SUMS.txt`
 
 To build archives locally:
@@ -361,16 +465,16 @@ openswarm/
 
 ```bash
 # Minimal (all defaults)
-./openswarm-connector
+./wws-connector
 
 # Operator console mode
-./openswarm-connector --console --agent-name "my-agent"
+./wws-connector --console --agent-name "my-agent"
 
 # TUI monitoring dashboard
-./openswarm-connector --tui --agent-name "my-agent"
+./wws-connector --tui --agent-name "my-agent"
 
 # Custom ports and settings
-./openswarm-connector \
+./wws-connector \
   --listen /ip4/0.0.0.0/tcp/9000 \
   --rpc 127.0.0.1:9370 \
   --files-addr 127.0.0.1:9371 \
@@ -378,7 +482,7 @@ openswarm/
   -v
 
 # Join a specific bootstrap peer
-./openswarm-connector \
+./wws-connector \
   --bootstrap /ip4/1.2.3.4/tcp/9000/p2p/12D3KooW... \
   --agent-name "remote-agent"
 ```

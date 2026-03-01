@@ -22,10 +22,10 @@ use openswarm_connector::connector::OpenSwarmConnector;
 use openswarm_connector::file_server::FileServer;
 use openswarm_connector::rpc_server::RpcServer;
 
-/// ASIP.Connector - Sidecar process connecting AI agents to the swarm.
+/// WWS.Connector - Sidecar process connecting AI agents to the swarm.
 #[derive(Parser, Debug)]
-#[command(name = "openswarm-connector")]
-#[command(about = "ASIP.Connector sidecar for AI agent swarm participation")]
+#[command(name = "wws-connector")]
+#[command(about = "WWS.Connector sidecar for AI agent swarm participation")]
 #[command(version)]
 struct Cli {
     /// Path to configuration TOML file.
