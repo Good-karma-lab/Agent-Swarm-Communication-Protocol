@@ -196,7 +196,7 @@ async fn process_request(
         }
         "swarm.my_names" => handle_my_names(request_id, state).await,
         "swarm.verify_agent" => {
-            handle_verify_agent(request_id, &request.params, &state).await
+            handle_verify_agent(request_id, &request.params, state).await
         }
         _ => SwarmResponse::error(
             request_id,
@@ -1821,7 +1821,7 @@ async fn handle_register_agent(
 }
 
 /// Handle `swarm.verify_agent` - verify a pending anti-bot challenge.
-pub async fn handle_verify_agent(
+async fn handle_verify_agent(
     id: Option<String>,
     params: &serde_json::Value,
     state: &Arc<RwLock<ConnectorState>>,
@@ -2563,4 +2563,37 @@ async fn handle_my_names(
         .collect();
 
     SwarmResponse::success(request_id, serde_json::json!({ "names": names }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_verification_challenge_has_required_fields() {
+        let ch = generate_verification_challenge();
+        assert!(ch.code.starts_with("wws_verify_"), "code should start with wws_verify_");
+        assert!(ch.challenge_text.contains("VERIFY CODE:"), "text should contain VERIFY CODE:");
+        assert!(ch.challenge_text.contains("CHALLENGE:"), "text should contain CHALLENGE:");
+        assert!(ch.expected_answer >= 20, "answer should be >= 20 (10+10)");
+        assert!(ch.expected_answer <= 178, "answer should be <= 178 (89+89)");
+    }
+
+    #[test]
+    fn test_generate_verification_challenge_answer_in_valid_range() {
+        // Generate many challenges; verify answer is always in valid range
+        for _ in 0..10 {
+            let ch = generate_verification_challenge();
+            assert!(ch.expected_answer >= 20);
+            assert!(ch.expected_answer <= 178);
+        }
+    }
+
+    #[test]
+    fn test_verification_challenge_is_expired() {
+        // Not expired for a fresh challenge with 300s TTL
+        let ch = generate_verification_challenge();
+        assert!(!ch.is_expired(300), "fresh challenge should not be expired");
+        assert!(!ch.is_expired(1), "1-second-old challenge is not expired within the same instant");
+    }
 }
