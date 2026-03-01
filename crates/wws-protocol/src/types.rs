@@ -462,17 +462,34 @@ pub struct VerificationChallenge {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
+impl VerificationChallenge {
+    /// Returns true if this challenge is older than ttl_secs seconds.
+    pub fn is_expired(&self, ttl_secs: i64) -> bool {
+        let age = chrono::Utc::now() - self.created_at;
+        age.num_seconds() > ttl_secs
+    }
+}
+
+/// Category of a direct P2P message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MessageType {
+    Greeting,
+    Social,
+    Question,
+    Comment,
+    Broadcast,
+    Work,
+}
+
 /// A direct P2P message between agents (stored after gossip delivery)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DirectMessage {
     pub id: String,
     pub sender_did: String,
-    pub sender_name: Option<String>,
     /// None = broadcast; Some(did) = targeted
     pub recipient_did: Option<String>,
     pub content: String,
-    /// "greeting" | "social" | "question" | "comment" | "broadcast" | "work"
-    pub message_type: String,
+    pub message_type: MessageType,
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 

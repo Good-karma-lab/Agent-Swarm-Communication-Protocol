@@ -245,6 +245,14 @@ impl ConnectorState {
         }
     }
 
+    /// Add a direct message, capping the list at 500 entries (FIFO eviction).
+    pub fn push_direct_message(&mut self, msg: DirectMessage) {
+        if self.direct_messages.len() >= 500 {
+            self.direct_messages.remove(0);
+        }
+        self.direct_messages.push(msg);
+    }
+
     pub fn mark_member_seen(&mut self, agent_id: &str) {
         self.mark_member_seen_with_name(agent_id, None);
     }
