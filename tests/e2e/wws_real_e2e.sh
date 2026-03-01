@@ -145,7 +145,7 @@ log "Collecting agent identities from /api/identity..."
 #   tendermint-> 19391
 #   hashgraph -> 19393
 #   synth     -> 19395
-AGENTS="bootstrap alpha beta raft pbft paxos tendermint hashgraph synth"
+AGENTS=(bootstrap alpha beta raft pbft paxos tendermint hashgraph synth)
 
 HTTP_PORT_bootstrap=19371
 HTTP_PORT_alpha=19381
@@ -167,7 +167,7 @@ RPC_PORT_hashgraph=19382
 RPC_PORT_synth=19384
 
 # Collect DIDs into individual variables (avoid declare -A issues in heredocs)
-for agent in $AGENTS; do
+for agent in "${AGENTS[@]}"; do
     port_var="HTTP_PORT_${agent}"
     port="${!port_var}"
     resp=$(curl -sf "http://127.0.0.1:${port}/api/identity" 2>/dev/null || true)
