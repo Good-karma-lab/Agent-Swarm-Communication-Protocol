@@ -26,6 +26,7 @@
 ### Implementation
 
 * [Connector Guide](Connector-Guide)
+* [Advanced Features](ADVANCED_FEATURES)
 
 ---
 
