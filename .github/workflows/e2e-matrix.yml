@@ -10,8 +10,30 @@ on:
     - cron: "0 4 * * *"
 
 jobs:
+  wws-unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run full unit + integration test suite
+        run: ~/.cargo/bin/cargo test --workspace
+
+      - name: Run WWS adversarial tests
+        run: bash tests/e2e/adversarial_tests.sh
+
+      - name: Run WWS chaos tests
+        run: bash tests/e2e/chaos_tests.sh
+
   fast-e2e:
     runs-on: ubuntu-latest
+    needs: wws-unit-tests
     steps:
       - name: Checkout
         uses: actions/checkout@v4

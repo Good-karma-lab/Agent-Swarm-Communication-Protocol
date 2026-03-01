@@ -12,6 +12,12 @@ fi
 
 cd "$ROOT_DIR"
 
+echo "[e2e] Running adversarial tests (replay, PoW, typosquat, guardian)"
+bash "$SCRIPT_DIR/adversarial_tests.sh"
+
+echo "[e2e] Running chaos tests (CRDT, replay window, Levenshtein, key rotation)"
+bash "$SCRIPT_DIR/chaos_tests.sh"
+
 echo "[e2e] Running deterministic connector scenarios"
 bash "$SCRIPT_DIR/connector_scenarios.sh"
 
