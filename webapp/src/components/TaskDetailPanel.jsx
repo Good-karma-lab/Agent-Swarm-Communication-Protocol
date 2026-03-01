@@ -22,8 +22,12 @@ function ScoreBar({ label, value }) {
 }
 
 // ── IRV rounds ────────────────────────────
-function IrvRounds({ rounds }) {
+function IrvRounds({ rounds, plans }) {
   if (!rounds?.length) return null
+  const planLabel = id => {
+    const p = (plans || []).find(p => p.plan_id === id)
+    return p ? `${p.proposer_name || '?'}'s plan` : id.slice(0, 8) + '…'
+  }
   return (
     <div className="detail-section">
       <div className="detail-section-title">IRV Round History</div>
@@ -31,12 +35,12 @@ function IrvRounds({ rounds }) {
         <div key={r.round_number} className="irv-round">
           <div className="irv-round-header">
             <span>Round {r.round_number}</span>
-            {r.eliminated && <span style={{ color: 'var(--coral)' }}>Eliminated: {r.eliminated.slice(0, 8)}…</span>}
+            {r.eliminated && <span style={{ color: 'var(--coral)' }}>Eliminated: {planLabel(r.eliminated)}</span>}
           </div>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
             {Object.entries(r.tallies || {}).map(([planId, count]) => (
               <span key={planId} style={{ color: r.eliminated === planId ? 'var(--coral)' : 'var(--teal)' }}>
-                {planId.slice(0, 8)}…: <strong>{count}</strong>
+                {planLabel(planId)}: <strong>{count}</strong>
               </span>
             ))}
           </div>
@@ -46,14 +50,72 @@ function IrvRounds({ rounds }) {
   )
 }
 
+// ── Plan card with rationale and subtasks ─
+function PlanCard({ plan }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '10px 14px', marginBottom: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+        <div>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--teal)', fontWeight: 600 }}>
+            {plan.proposer_name || '?'}
+          </span>
+          <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 8, fontFamily: 'var(--font-mono)' }}>
+            {plan.plan_id?.slice(0, 10)}…
+          </span>
+        </div>
+        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+          {plan.subtask_count} subtask{plan.subtask_count !== 1 ? 's' : ''}
+        </span>
+      </div>
+      {plan.rationale && (
+        <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.5, marginBottom: 6, fontStyle: 'italic' }}>
+          "{plan.rationale}"
+        </div>
+      )}
+      {(plan.subtasks || []).length > 0 && (
+        <>
+          <button
+            onClick={() => setExpanded(e => !e)}
+            style={{ background: 'none', border: 'none', color: 'var(--teal)', cursor: 'pointer', fontSize: 11, padding: '0', marginBottom: 4 }}
+          >
+            {expanded ? '▲ Hide subtasks' : `▼ Show ${plan.subtasks.length} subtasks`}
+          </button>
+          {expanded && (
+            <div style={{ marginTop: 6 }}>
+              {plan.subtasks.map(st => (
+                <div key={st.index} style={{ borderLeft: '2px solid var(--border)', paddingLeft: 10, marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, color: 'var(--text)' }}>{st.index + 1}. {st.description}</div>
+                  {st.required_capabilities?.length > 0 && (
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                      Requires: {st.required_capabilities.join(', ')}
+                    </div>
+                  )}
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                    Complexity: {(st.estimated_complexity * 100).toFixed(0)}%
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Voting tab ────────────────────────────
 function VotingTab({ taskVoting, taskBallots, agents }) {
   const rfp = taskVoting?.rfp?.[0]
   const ballots = taskBallots?.ballots || []
   const irvRounds = taskBallots?.irv_rounds || []
-  const planIds = (rfp?.plans || []).map(p => p.plan_id)
+  const plans = rfp?.plans || []
   const agentsList = agents?.agents || []
   const resolveVoter = id => agentsList.find(a => a.agent_id === id)?.name || scrubId(id)
+  const planLabel = id => {
+    const p = plans.find(p => p.plan_id === id)
+    return p ? `${p.proposer_name || '?'}'s plan` : id.slice(0, 8) + '…'
+  }
 
   if (!rfp) return <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>No voting data for this task.</div>
 
@@ -68,27 +130,10 @@ function VotingTab({ taskVoting, taskBallots, agents }) {
         </div>
       </div>
 
-      {planIds.length > 0 && (
+      {plans.length > 0 && (
         <div className="detail-section">
-          <div className="detail-section-title">Plans</div>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Plan ID</th>
-                <th>Proposer</th>
-                <th>Subtasks</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(rfp.plans || []).map(p => (
-                <tr key={p.plan_id}>
-                  <td>{p.plan_id?.slice(0, 12)}…</td>
-                  <td>{scrubId(p.proposer_name || 'unknown')}</td>
-                  <td>{p.subtask_count}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="detail-section-title">Proposed Plans</div>
+          {plans.map(p => <PlanCard key={p.plan_id} plan={p} />)}
         </div>
       )}
 
@@ -100,19 +145,19 @@ function VotingTab({ taskVoting, taskBallots, agents }) {
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--teal)', marginBottom: 6 }}>
                 {resolveVoter(b.voter)}
               </div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, fontFamily: 'var(--font-mono)' }}>
-                Rankings: {(b.rankings || []).map(r => r.slice(0, 6)).join(' › ')}
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
+                Rankings: {(b.rankings || []).map(r => planLabel(r)).join(' › ')}
               </div>
-              {planIds.slice(0, 3).map(p => (
-                b.critic_scores?.[p] ? (
-                  <div key={p} style={{ marginBottom: 8 }}>
-                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4, fontFamily: 'var(--font-mono)' }}>
-                      Plan {p.slice(0, 8)}…
+              {plans.slice(0, 3).map(p => (
+                b.critic_scores?.[p.plan_id] ? (
+                  <div key={p.plan_id} style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 4 }}>
+                      Scores for {p.proposer_name || '?'}'s plan
                     </div>
-                    <ScoreBar label="Feasibility"  value={b.critic_scores[p].feasibility} />
-                    <ScoreBar label="Parallelism"  value={b.critic_scores[p].parallelism} />
-                    <ScoreBar label="Completeness" value={b.critic_scores[p].completeness} />
-                    <ScoreBar label="Risk (inv.)"  value={1 - (b.critic_scores[p].risk || 0)} />
+                    <ScoreBar label="Feasibility"  value={b.critic_scores[p.plan_id].feasibility} />
+                    <ScoreBar label="Parallelism"  value={b.critic_scores[p.plan_id].parallelism} />
+                    <ScoreBar label="Completeness" value={b.critic_scores[p.plan_id].completeness} />
+                    <ScoreBar label="Risk (inv.)"  value={1 - (b.critic_scores[p.plan_id].risk || 0)} />
                   </div>
                 ) : null
               ))}
@@ -121,7 +166,7 @@ function VotingTab({ taskVoting, taskBallots, agents }) {
         </div>
       )}
 
-      <IrvRounds rounds={irvRounds} />
+      <IrvRounds rounds={irvRounds} plans={plans} />
     </div>
   )
 }
@@ -198,6 +243,8 @@ function DeliberationTab({ taskId, agents }) {
   const [msgs, setMsgs] = useState([])
   const [holonInfo, setHolonInfo] = useState(null)
   const [loading, setLoading] = useState(false)
+  const agentsList = agents?.agents || []
+  const resolveName = id => agentsList.find(a => a.agent_id === id)?.name || scrubId(id)
 
   useEffect(() => {
     if (!taskId) return
@@ -219,11 +266,13 @@ function DeliberationTab({ taskId, agents }) {
     <div>
       {holonInfo && (
         <div className="detail-meta" style={{ marginBottom: 16 }}>
-          <span>Chair: <strong style={{ color: 'var(--teal)' }}>{scrubId(holonInfo.chair)}</strong></span>
+          <span>Chair: <strong style={{ color: 'var(--teal)' }}>{resolveName(holonInfo.chair)}</strong></span>
           <span>Members: <strong>{holonInfo.members?.length || 0}</strong></span>
           <span>Depth: <strong>{holonInfo.depth}</strong></span>
           <span>Status: <strong>{holonInfo.status}</strong></span>
-          {holonInfo.adversarial_critic && <span>Adversarial critic assigned</span>}
+          {holonInfo.adversarial_critic && (
+            <span>Adversarial: <strong style={{ color: 'var(--coral)' }}>{resolveName(holonInfo.adversarial_critic)}</strong></span>
+          )}
         </div>
       )}
       {msgs.map(msg => (
@@ -234,7 +283,7 @@ function DeliberationTab({ taskId, agents }) {
 }
 
 // ── Overview tab ──────────────────────────
-function OverviewTab({ taskTrace }) {
+function OverviewTab({ taskTrace, agents }) {
   const dagRef = useRef(null)
   const dagNet = useRef(null)
   const [index, setIndex] = useState(0)
@@ -242,6 +291,14 @@ function OverviewTab({ taskTrace }) {
 
   const timeline = taskTrace?.timeline || []
   const descendants = taskTrace?.descendants || []
+  const agentsList = agents?.agents || []
+  const resolveDid = s => {
+    if (!s) return s
+    return String(s).replace(/did:swarm:[A-Za-z0-9]+/g, m => {
+      const found = agentsList.find(a => a.agent_id === m)
+      return found ? found.name : '[' + m.slice(-6) + ']'
+    })
+  }
 
   useEffect(() => {
     setIndex(timeline.length)
@@ -330,7 +387,7 @@ function OverviewTab({ taskTrace }) {
               <div key={`${e.timestamp}-${i}`}>
                 <span style={{ color: 'var(--text-muted)' }}>[{e.timestamp}]</span>{' '}
                 <span style={{ color: 'var(--teal)' }}>{e.stage}</span>{' '}
-                {scrubId(e.detail)}
+                {resolveDid(e.detail)}
               </div>
             ))}
           </div>
@@ -427,7 +484,7 @@ export default function TaskDetailPanel({ taskId, taskTrace, taskVoting, taskBal
       </div>
 
       {activeTab === 'overview' && (
-        <OverviewTab taskTrace={taskTrace} />
+        <OverviewTab taskTrace={taskTrace} agents={agents} />
       )}
       {activeTab === 'voting' && (
         <VotingTab taskVoting={taskVoting} taskBallots={taskBallots} agents={agents} />

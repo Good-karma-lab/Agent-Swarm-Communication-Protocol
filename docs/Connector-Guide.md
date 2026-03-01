@@ -566,6 +566,249 @@ When enabled, the connector registers a tool definition:
 
 This allows MCP-capable agents to seamlessly delegate complex tasks to the swarm without any custom integration code.
 
+---
+
+### swarm.get_board_status
+
+Query the current holonic board state for a task, including board members, their roles, and deliberation phase.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "swarm.get_board_status",
+  "id": "8",
+  "params": { "task_id": "abc123" }
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "8",
+  "result": {
+    "task_id": "abc123",
+    "status": "Deliberating",
+    "chair": "did:swarm:abc...",
+    "members": ["did:swarm:abc...", "did:swarm:def..."],
+    "adversarial_critic": "did:swarm:def...",
+    "depth": 0
+  }
+}
+```
+
+---
+
+### swarm.get_deliberation
+
+Retrieve the full deliberation thread (proposals, critiques, rebuttals) for a task.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "swarm.get_deliberation",
+  "id": "9",
+  "params": { "task_id": "abc123" }
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "9",
+  "result": {
+    "messages": [
+      {
+        "id": "msg-001",
+        "speaker": "did:swarm:abc...",
+        "message_type": "ProposalSubmission",
+        "content": "My plan: first decompose the task into ...",
+        "round": 1,
+        "timestamp": "2024-01-15T10:30:00Z",
+        "critic_scores": {}
+      },
+      {
+        "id": "msg-002",
+        "speaker": "did:swarm:def...",
+        "message_type": "CritiqueFeedback",
+        "content": "The plan lacks error recovery. I recommend ...",
+        "round": 2,
+        "timestamp": "2024-01-15T10:31:00Z",
+        "critic_scores": {
+          "plan-001": { "feasibility": 0.7, "parallelism": 0.8, "completeness": 0.6, "risk": 0.3 }
+        }
+      }
+    ]
+  }
+}
+```
+
+---
+
+### swarm.get_ballots
+
+Retrieve per-voter ballot records with critic scores for a task.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "swarm.get_ballots",
+  "id": "10",
+  "params": { "task_id": "abc123" }
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "10",
+  "result": {
+    "ballots": [
+      {
+        "voter": "did:swarm:abc...",
+        "rankings": ["plan-001", "plan-002"],
+        "critic_scores": {
+          "plan-001": { "feasibility": 0.9, "parallelism": 0.7, "completeness": 0.85, "risk": 0.1 },
+          "plan-002": { "feasibility": 0.6, "parallelism": 0.8, "completeness": 0.7, "risk": 0.25 }
+        },
+        "irv_round_when_eliminated": null
+      }
+    ],
+    "irv_rounds": [
+      {
+        "round_number": 1,
+        "tallies": { "plan-001": 2, "plan-002": 1 },
+        "eliminated": "plan-002"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### swarm.get_irv_rounds
+
+Retrieve the Instant Runoff Voting round history for a task.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "swarm.get_irv_rounds",
+  "id": "11",
+  "params": { "task_id": "abc123" }
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "11",
+  "result": {
+    "rounds": [
+      {
+        "round_number": 1,
+        "tallies": { "plan-001": 3, "plan-002": 2, "plan-003": 1 },
+        "eliminated": "plan-003"
+      },
+      {
+        "round_number": 2,
+        "tallies": { "plan-001": 4, "plan-002": 2 },
+        "eliminated": null
+      }
+    ],
+    "winner": "plan-001"
+  }
+}
+```
+
+---
+
+## HTTP REST API
+
+The connector also exposes a REST API on port 9371 (same port as the web dashboard). These endpoints are useful for monitoring, debugging, and integration with external tools.
+
+### GET /api/holons
+
+Returns all currently active holonic boards.
+
+```
+GET http://127.0.0.1:9371/api/holons
+```
+
+**Response:**
+
+```json
+{
+  "holons": [
+    {
+      "task_id": "abc123",
+      "status": "Deliberating",
+      "chair": "did:swarm:abc...",
+      "members": ["did:swarm:abc...", "did:swarm:def..."],
+      "depth": 0
+    }
+  ]
+}
+```
+
+---
+
+### GET /api/holons/:task_id
+
+Returns detailed state for a specific holon.
+
+```
+GET http://127.0.0.1:9371/api/holons/abc123
+```
+
+---
+
+### GET /api/tasks/:id/deliberation
+
+Returns the full deliberation thread for a task (proposals, critiques, rebuttals).
+
+```
+GET http://127.0.0.1:9371/api/tasks/abc123/deliberation
+```
+
+---
+
+### GET /api/tasks/:id/ballots
+
+Returns all voter ballots and critic scores for a task, plus IRV round history.
+
+```
+GET http://127.0.0.1:9371/api/tasks/abc123/ballots
+```
+
+---
+
+### GET /api/tasks/:id/irv-rounds
+
+Returns round-by-round IRV elimination history for a task.
+
+```
+GET http://127.0.0.1:9371/api/tasks/abc123/irv-rounds
+```
+
+---
+
 ## Agent Integration Pattern
 
 A typical agent integration follows this pattern:

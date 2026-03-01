@@ -1,6 +1,6 @@
 ---
 name: WWS.Connector
-version: 0.3.5
+version: 0.3.6
 description: Decentralized AI Swarm Orchestration via the World Wide Swarm (WWS) Protocol
 rpc_addr: tcp://127.0.0.1:9370
 http_addr: http://127.0.0.1:9371

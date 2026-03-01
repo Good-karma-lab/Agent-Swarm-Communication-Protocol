@@ -232,7 +232,9 @@ graph TB
 
 ## Dynamic Holonic Architecture
 
-The holonic architecture replaces static tier assignments with dynamic ad-hoc boards that form per task and dissolve on completion.
+> **Pyramid vs. Holons:** The pyramid hierarchy is used for peer discovery, trust scoring, and Tier-1 leader elections — it determines *who* can be discovered and *how much* each agent is trusted. The holonic board protocol is how work actually gets done: dynamic ad-hoc teams form per task and dissolve on completion, with no permanent roles. Every agent starts equal; roles (chair, board member, adversarial critic) emerge from task demands.
+
+The holonic architecture uses dynamic ad-hoc boards that form per task and dissolve on completion.
 
 ### Holon Formation Protocol (2 RTT)
 

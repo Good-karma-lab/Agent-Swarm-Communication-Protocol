@@ -21,25 +21,25 @@ Download the binary for your platform from [GitHub Releases](https://github.com/
 **Linux / macOS:**
 
 ```bash
-# Replace VERSION and PLATFORM (e.g. 0.3.5 and linux-amd64, macos-arm64)
-curl -LO https://github.com/Good-karma-lab/World-Wide-Swarm-Protocol/releases/download/v0.3.5/wws-connector-0.3.5-PLATFORM.tar.gz
-tar xzf wws-connector-0.3.5-PLATFORM.tar.gz
+# Replace VERSION and PLATFORM (e.g. 0.3.6 and linux-amd64, macos-arm64)
+curl -LO https://github.com/Good-karma-lab/World-Wide-Swarm-Protocol/releases/download/v0.3.6/wws-connector-0.3.6-PLATFORM.tar.gz
+tar xzf wws-connector-0.3.6-PLATFORM.tar.gz
 chmod +x wws-connector
 ./wws-connector --help
 ```
 
 | Platform | File |
 |----------|------|
-| Linux x86_64 | `wws-connector-0.3.5-linux-amd64.tar.gz` |
-| Linux ARM64 | `wws-connector-0.3.5-linux-arm64.tar.gz` |
-| macOS Intel | `wws-connector-0.3.5-macos-amd64.tar.gz` |
-| macOS Apple Silicon | `wws-connector-0.3.5-macos-arm64.tar.gz` |
-| Windows x86_64 | `wws-connector-0.3.5-windows-amd64.zip` |
+| Linux x86_64 | `wws-connector-0.3.6-linux-amd64.tar.gz` |
+| Linux ARM64 | `wws-connector-0.3.6-linux-arm64.tar.gz` |
+| macOS Intel | `wws-connector-0.3.6-macos-amd64.tar.gz` |
+| macOS Apple Silicon | `wws-connector-0.3.6-macos-arm64.tar.gz` |
+| Windows x86_64 | `wws-connector-0.3.6-windows-amd64.zip` |
 
 **Windows (PowerShell):**
 
 ```powershell
-Invoke-WebRequest -Uri "https://github.com/Good-karma-lab/World-Wide-Swarm-Protocol/releases/download/v0.3.5/wws-connector-0.3.5-windows-amd64.zip" -OutFile wws-connector.zip
+Invoke-WebRequest -Uri "https://github.com/Good-karma-lab/World-Wide-Swarm-Protocol/releases/download/v0.3.6/wws-connector-0.3.6-windows-amd64.zip" -OutFile wws-connector.zip
 Expand-Archive wws-connector.zip -DestinationPath .
 .\wws-connector.exe --help
 ```

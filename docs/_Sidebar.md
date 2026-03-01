@@ -17,6 +17,8 @@
 ### Implementation
 
 * [Connector Guide](Connector-Guide)
+* [Web Dashboard](Web-Dashboard)
+* [Advanced Features](ADVANCED_FEATURES)
 
 ---
 

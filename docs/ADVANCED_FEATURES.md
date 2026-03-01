@@ -4,20 +4,21 @@ This document explains hierarchy formation, voting, and task decomposition in th
 
 ## Current Status
 
-**Working:**
+**Working — full holonic swarm protocol:**
 - ✅ Agent registration and tracking
 - ✅ Task injection and assignment
 - ✅ Task execution and result submission
 - ✅ Continuous agent polling loop
 - ✅ P2P mesh networking (Kademlia + GossipSub)
 - ✅ Duplicate submission prevention
-
-**Partially Implemented (requires activation):**
-- ⚠️ Hierarchy formation (pyramid structure)
-- ⚠️ Tier-1 leader elections
-- ⚠️ RFP commit-reveal protocol
-- ⚠️ Instant Runoff Voting
-- ⚠️ Recursive task decomposition
+- ✅ Dynamic holon board formation (`board.invite/accept/decline/ready/dissolve`)
+- ✅ Two-round deliberation: CommitPhase → RevealPhase → CritiquePhase → ReadyForVoting
+- ✅ Adversarial critic assignment
+- ✅ Instant Runoff Voting with round-by-round history
+- ✅ Per-voter ballot records with per-plan critic scores
+- ✅ Recursive sub-holon formation (tasks with `estimated_complexity > 0.4`)
+- ✅ Tier-1 leader elections (Borda count via GossipSub)
+- ✅ Pyramid hierarchy for peer discovery and tier assignment
 
 ---
 

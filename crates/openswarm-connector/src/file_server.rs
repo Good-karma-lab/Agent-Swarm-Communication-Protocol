@@ -374,6 +374,12 @@ async fn voting_payload(
                         "plan_hash": p.plan_hash,
                         "rationale": p.plan.rationale,
                         "subtask_count": p.plan.subtasks.len(),
+                        "subtasks": p.plan.subtasks.iter().map(|st| serde_json::json!({
+                            "index": st.index,
+                            "description": st.description,
+                            "required_capabilities": st.required_capabilities,
+                            "estimated_complexity": st.estimated_complexity,
+                        })).collect::<Vec<_>>(),
                     })
                 })
                 .collect::<Vec<_>>();
