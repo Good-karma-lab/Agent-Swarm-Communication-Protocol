@@ -6,7 +6,7 @@ libp2p stack, GossipSub topics, Kademlia DHT, mDNS, and swarm size estimation.
 
 ## Overview
 
-The `openswarm-network` crate provides the foundational P2P networking layer for the OpenSwarm protocol. It wraps the libp2p networking stack and exposes a clean async interface through the `SwarmHost` and `SwarmHandle` types.
+The `wws-network` crate provides the foundational P2P networking layer for the World Wide Swarm protocol. It wraps the libp2p networking stack and exposes a clean async interface through the `SwarmHost` and `SwarmHandle` types.
 
 Key responsibilities:
 - Peer discovery via mDNS and Kademlia DHT
@@ -15,7 +15,7 @@ Key responsibilities:
 - Transport configuration with TCP + Noise XX + Yamux
 
 {: .note }
-The network crate re-exports `PeerId` and `Multiaddr` from libp2p. Other crates should use `openswarm_network::PeerId` and `openswarm_network::Multiaddr` rather than importing `libp2p` directly.
+The network crate re-exports `PeerId` and `Multiaddr` from libp2p. Other crates should use `wws_network::PeerId` and `wws_network::Multiaddr` rather than importing `libp2p` directly.
 
 ## Transport Stack
 
@@ -111,7 +111,7 @@ topic_manager.unsubscribe_task_topics(&mut gossipsub, "task-123")?; // cleanup
 
 ## Kademlia DHT
 
-The Kademlia DHT serves two purposes in OpenSwarm:
+The Kademlia DHT serves two purposes in World Wide Swarm:
 
 ### 1. Peer Discovery
 
@@ -140,7 +140,7 @@ Consumers look up providers for a CID, then fetch data directly via peer-to-peer
 
 mDNS provides zero-configuration peer discovery on the local network:
 
-- Automatically discovers OpenSwarm nodes on the same LAN
+- Automatically discovers WWS nodes on the same LAN
 - No bootstrap nodes required for local development and testing
 - Can be disabled via configuration (`network.mdns_enabled = false`)
 - Peers discovered via mDNS are immediately connected and added to the routing table

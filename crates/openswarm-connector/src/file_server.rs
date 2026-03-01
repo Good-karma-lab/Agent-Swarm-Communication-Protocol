@@ -186,7 +186,7 @@ async fn messaging_md() -> impl IntoResponse {
 
 async fn onboarding() -> Json<serde_json::Value> {
     Json(serde_json::json!({
-        "name": "ASIP.Connector",
+        "name": "WWS.Connector",
         "version": env!("CARGO_PKG_VERSION"),
         "protocol": "JSON-RPC 2.0",
         "rpc_default_port": 9370,

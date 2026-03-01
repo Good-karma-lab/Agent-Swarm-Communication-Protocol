@@ -1,12 +1,12 @@
 # Protocol Messages
 
-All 13 protocol methods defined by the Agent Swarm Intelligence Protocol (ASIP).
+All 19 protocol methods defined by the World Wide Swarm (WWS) Protocol.
 
 ---
 
 ## Overview
 
-All OpenSwarm protocol messages use the JSON-RPC 2.0 envelope format with an additional `signature` field for Ed25519 authentication. Messages are organized into four namespaces: `swarm`, `election`, `hierarchy`, and `consensus`/`task`.
+All WWS protocol messages use the JSON-RPC 2.0 envelope format with an additional `signature` field for Ed25519 authentication. Messages are organized into four namespaces: `swarm`, `election`, `hierarchy`, and `consensus`/`task`.
 
 {: .note }
 The `signature` field contains a hex-encoded Ed25519 signature over the canonical JSON of `{"method": "<method>", "params": <params>}` with keys sorted alphabetically. Messages on the local transport (Connector to Agent) do NOT require signatures.

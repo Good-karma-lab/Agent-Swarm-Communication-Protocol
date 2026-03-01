@@ -37,7 +37,7 @@ pub const POW_DIFFICULTY: u32 = 16;
 pub const DEFAULT_SWARM_ID: &str = "public";
 
 /// Default swarm display name.
-pub const DEFAULT_SWARM_NAME: &str = "ASIP Public";
+pub const DEFAULT_SWARM_NAME: &str = "WWS Public";
 
 /// DHT key prefix for swarm registry records.
 pub const SWARM_REGISTRY_PREFIX: &str = "/openswarm/registry/";

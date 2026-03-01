@@ -1,6 +1,6 @@
-# Enabling Advanced OpenSwarm Features
+# Advanced WWS Features
 
-This document explains how to enable and test hierarchy formation, voting, and task decomposition in OpenSwarm.
+This document explains hierarchy formation, voting, and task decomposition in the World Wide Swarm.
 
 ## Current Status
 

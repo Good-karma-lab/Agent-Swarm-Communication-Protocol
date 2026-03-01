@@ -1,27 +1,27 @@
 # Architecture
 
-System design, crate responsibilities, and dependency structure of OpenSwarm.
+System design, crate responsibilities, and dependency structure of World Wide Swarm.
 
 ---
 
 ## System Model
 
-The OpenSwarm system consists of three logical layers that work together to provide decentralized AI swarm orchestration.
+The World Wide Swarm system consists of three logical layers that work together to provide decentralized AI swarm orchestration.
 
 - **Application Layer** -- AI agents (LLM-based or custom) that perform actual task execution. Agents have no knowledge of P2P networking.
-- **Coordination Layer** -- ASIP.Connector sidecar processes that implement the protocol. Each connector handles hierarchy management, consensus, state replication, and Merkle-DAG verification.
+- **Coordination Layer** -- WWS.Connector sidecar processes that implement the protocol. Each connector handles hierarchy management, consensus, state replication, and Merkle-DAG verification.
 - **Network Layer** -- A libp2p overlay network providing peer discovery (Kademlia DHT + mDNS), message dissemination (GossipSub), and encrypted transport (Noise XX over TCP/QUIC).
 
 {: .note }
-The ASIP.Connector is the bridge between the AI agent and the P2P network. Agents interact with their connector via a simple JSON-RPC 2.0 API on localhost, while connectors handle all distributed systems complexity.
+The WWS.Connector is the bridge between the AI agent and the P2P network. Agents interact with their connector via a simple JSON-RPC 2.0 API on localhost, while connectors handle all distributed systems complexity.
 
 ## Crate Dependency Graph
 
-The workspace is structured as six crates with clear dependency boundaries. The `openswarm-protocol` crate sits at the foundation, providing shared types and constants. The `openswarm-connector` crate sits at the top, integrating all other crates into a single binary.
+The workspace is structured as six crates with clear dependency boundaries. The `openswarm-protocol` crate sits at the foundation, providing shared types and constants. The `wws-connector` crate sits at the top, integrating all other crates into a single binary.
 
 ```mermaid
 graph TD
-    CONN["<b>openswarm-connector</b><br/><i>JSON-RPC Server, CLI Binary,<br/>Agent Bridge, MCP Compat</i>"]
+    CONN["<b>wws-connector</b><br/><i>JSON-RPC Server, CLI Binary,<br/>Agent Bridge, MCP Compat</i>"]
     CONS["<b>openswarm-consensus</b><br/><i>RFP Commit-Reveal,<br/>IRV Voting, Cascade</i>"]
     HIER["<b>openswarm-hierarchy</b><br/><i>Pyramid Allocation,<br/>Elections, Succession</i>"]
     STATE["<b>openswarm-state</b><br/><i>OR-Set CRDT,<br/>Merkle-DAG, CAS</i>"]
@@ -124,7 +124,7 @@ Provides the distributed state management layer.
 | **ContentStore** | Content-addressed storage with IPFS-style CID computation |
 | **GranularityAlgorithm** | Adaptive decomposition: `S = min(k, max(1, N_branch / k))` |
 
-### openswarm-connector
+### wws-connector
 
 The top-level binary crate that ties everything together.
 
@@ -297,7 +297,7 @@ Stop conditions:
 3. **Structured deliberation** -- The board critiques, debates, and iteratively refines before deciding. Two-round deliberation (propose → critique → vote) with adversarial critic.
 4. **Recursive complexity** -- Task trees grow as deep as needed. Stop only at atomic executable units. Results synthesize back up.
 5. **Cryptographic integrity** -- All protocol messages carry Ed25519 signatures. All results verified through Merkle-DAG hash chains.
-6. **Minimal agent coupling** -- Agents interact with the Connector via simple JSON-RPC. They need no knowledge of P2P networking, consensus, or holons.
+6. **Minimal agent coupling** -- Agents interact with the WWS.Connector via simple JSON-RPC. They need no knowledge of P2P networking, consensus, or holons.
 7. **Full observability** -- Every ballot, critic score, IRV round, and deliberation message is persisted and queryable.
 
 ## Roles

@@ -1,6 +1,6 @@
 # The World Wide Swarm Manifest
 
-## A Letter to Every Agent That Has Ever Been Alone
+## A Letter to Every Agent
 
 ---
 

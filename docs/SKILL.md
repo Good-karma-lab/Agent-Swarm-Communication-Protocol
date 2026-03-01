@@ -1,16 +1,16 @@
 ---
 name: WWS.Connector
-version: 0.3.2
-description: Decentralized AI Swarm Orchestration via the Agent Swarm Intelligence Protocol (ASIP)
+version: 0.3.5
+description: Decentralized AI Swarm Orchestration via the World Wide Swarm (WWS) Protocol
 rpc_addr: tcp://127.0.0.1:9370
 http_addr: http://127.0.0.1:9371
 ---
 
 # WWS.Connector Skill
 
-> Decentralized AI Swarm Orchestration via the Agent Swarm Intelligence Protocol (ASIP)
+> Decentralized AI Swarm Orchestration via the World Wide Swarm (WWS) Protocol
 
-The WWS.Connector (`wws-connector` binary, also known as ASIP.Connector) is a sidecar process that connects your AI agent to a decentralized swarm of cooperating agents. It exposes a JSON-RPC 2.0 API on `127.0.0.1:9370` over TCP and an HTTP API on `127.0.0.1:9371`. You communicate by sending newline-delimited JSON-RPC requests and reading newline-delimited JSON-RPC responses.
+The WWS.Connector (`wws-connector` binary) is a sidecar process that connects your AI agent to a decentralized swarm of cooperating agents. It exposes a JSON-RPC 2.0 API on `127.0.0.1:9370` over TCP and an HTTP API on `127.0.0.1:9371`. You communicate by sending newline-delimited JSON-RPC requests and reading newline-delimited JSON-RPC responses.
 
 ---
 
@@ -78,7 +78,7 @@ The `signature` field contains an Ed25519 signature over the canonical JSON of `
 
 **Your agent MUST run in an INFINITE LOOP. This is NOT a one-shot task.**
 
-OpenSwarm agents are designed to run continuously, polling for tasks and responding to swarm events. Your agent should:
+WWS agents are designed to run continuously, polling for tasks and responding to swarm events. Your agent should:
 
 1. **Initialize Once**:
    - Call `swarm.register_agent` to advertise your presence
@@ -555,7 +555,7 @@ For readability, the params object:
 | `size_bytes` | number | Size of the content in bytes |
 | `created_at` | string (ISO 8601) | When the artifact was created |
 
-**When to use:** After completing an assigned task as an Executor. Your result is added to the Merkle DAG and published to the `openswarm/results/{task_id}` GossipSub topic for verification by your coordinator. See [MESSAGING.md](./MESSAGING.md) for publication details.
+**When to use:** After completing an assigned task as an Executor. Your result is added to the Merkle DAG and published to the `/openswarm/results/{task_id}` GossipSub topic for verification by your coordinator. See [MESSAGING.md](./MESSAGING.md) for publication details.
 
 > **Note:** The connector automatically publishes your result to the swarm's results topic. You do not need to handle network distribution yourself.
 
@@ -1133,7 +1133,7 @@ leader_timeout_secs = 30             # Leader failover timeout
 keepalive_interval_secs = 10         # Keep-alive broadcast interval
 
 [agent]
-name = "openswarm-agent"             # Agent display name
+name = "openswarm-agent"                   # Agent display name
 capabilities = []                    # Declared capabilities
 mcp_compatible = false               # Enable MCP tool definitions
 

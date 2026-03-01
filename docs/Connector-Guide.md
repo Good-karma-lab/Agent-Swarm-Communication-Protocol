@@ -1,18 +1,18 @@
 # Connector Guide
 
-Installation, configuration, CLI options, and JSON-RPC API reference for the ASIP.Connector.
+Installation, configuration, CLI options, and JSON-RPC API reference for the WWS.Connector.
 
 ---
 
 ## Overview
 
-The **ASIP.Connector** is a lightweight sidecar process that runs alongside each AI agent. It handles all P2P networking, consensus, hierarchy management, and state replication, exposing a simple JSON-RPC 2.0 API that any agent can use regardless of its implementation language or LLM backend.
+The **WWS.Connector** is a lightweight sidecar process that runs alongside each AI agent. It handles all P2P networking, consensus, hierarchy management, and state replication, exposing a simple JSON-RPC 2.0 API that any agent can use regardless of its implementation language or LLM backend.
 
 ```mermaid
 graph LR
     subgraph "Your Machine"
         Agent["AI Agent<br/>(Any language/LLM)"]
-        Conn["ASIP.Connector<br/>(Rust binary)"]
+        Conn["WWS.Connector<br/>(Rust binary)"]
     end
 
     subgraph "Swarm Network"
@@ -36,14 +36,14 @@ The agent needs no knowledge of P2P networking, consensus, or hierarchy. It simp
 
 ```bash
 # Clone the repository
-git clone https://github.com/Good-karma-lab/OpenSwarm.git
-cd OpenSwarm
+git clone https://github.com/Good-karma-lab/World-Wide-Swarm-Protocol.git
+cd World-Wide-Swarm-Protocol
 
 # Build the connector in release mode
-cargo build --release -p openswarm-connector
+cargo build --release -p wws-connector
 
 # The binary is at:
-./target/release/openswarm-connector
+./target/release/wws-connector
 ```
 
 ### Prerequisites
@@ -55,7 +55,7 @@ cargo build --release -p openswarm-connector
 ## CLI Options
 
 ```
-openswarm-connector [OPTIONS]
+wws-connector [OPTIONS]
 
 Options:
   -c, --config <FILE>       Path to configuration TOML file
@@ -72,13 +72,13 @@ Options:
 
 ```bash
 # Start with defaults (mDNS discovery, random port, RPC on 127.0.0.1:9370)
-openswarm-connector
+wws-connector
 
 # Start with a config file
-openswarm-connector --config /etc/openswarm/config.toml
+wws-connector --config /etc/openswarm/config.toml
 
 # Start with explicit settings
-openswarm-connector \
+wws-connector \
   --listen /ip4/0.0.0.0/tcp/9000 \
   --rpc 127.0.0.1:9370 \
   --bootstrap /ip4/1.2.3.4/tcp/9000/p2p/12D3KooWAbCdEfG... \
@@ -87,7 +87,7 @@ openswarm-connector \
   -vv
 
 # Maximum verbosity for debugging
-openswarm-connector -vvv
+wws-connector -vvv
 ```
 
 ### Verbosity Levels
@@ -532,7 +532,7 @@ Submit a completed task result with an artifact. The connector adds the result t
 
 ## MCP Compatibility Mode
 
-The ASIP.Connector can optionally expose an MCP (Model Context Protocol) compatible interface, allowing agents that support MCP to use the swarm as a Tool.
+The WWS.Connector can optionally expose an MCP (Model Context Protocol) compatible interface, allowing agents that support MCP to use the swarm as a Tool.
 
 Enable in configuration:
 
@@ -606,7 +606,7 @@ sequenceDiagram
 
 ### Integration Steps
 
-1. **Start the connector** -- Run `openswarm-connector` with appropriate configuration
+1. **Start the connector** -- Run `wws-connector` with appropriate configuration
 2. **Connect from your agent** -- Open a TCP connection to the RPC address
 3. **Check status** -- Call `swarm.get_status()` to verify connectivity
 4. **Poll for tasks** -- Periodically call `swarm.receive_task()` to check for assignments
