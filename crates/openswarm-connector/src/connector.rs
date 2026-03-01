@@ -194,6 +194,8 @@ pub struct ConnectorState {
     pub irv_rounds: std::collections::HashMap<String, Vec<IrvRound>>,
     /// Board invitation acceptances per task: task_id -> Vec<BoardAcceptParams>.
     pub board_acceptances: std::collections::HashMap<String, Vec<BoardAcceptParams>>,
+    /// Agent name registry: human-readable name -> DID.
+    pub name_registry: std::collections::HashMap<String, String>,
 }
 
 impl ConnectorState {
@@ -484,6 +486,7 @@ impl OpenSwarmConnector {
             ballot_records: std::collections::HashMap::new(),
             irv_rounds: std::collections::HashMap::new(),
             board_acceptances: std::collections::HashMap::new(),
+            name_registry: std::collections::HashMap::new(),
         };
 
         Ok(Self {

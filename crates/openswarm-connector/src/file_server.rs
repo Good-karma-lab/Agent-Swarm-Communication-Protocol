@@ -8,9 +8,11 @@ use std::time::Duration;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as AxumPath, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
+use futures_util::stream::Stream;
 use serde::Deserialize;
 use tokio::sync::RwLock;
 use tower_http::services::{ServeDir, ServeFile};
@@ -96,6 +98,13 @@ impl FileServer {
             .route("/api/audit", get(api_audit))
             .route("/api/ui-recommendations", get(api_ui_recommendations))
             .route("/api/stream", get(api_stream))
+            .route("/api/identity", get(api_identity))
+            .route("/api/network", get(api_network))
+            .route("/api/reputation", get(api_reputation))
+            .route("/api/directory", get(api_directory))
+            .route("/api/names", get(api_names))
+            .route("/api/keys", get(api_keys))
+            .route("/api/events", get(api_events))
             .fallback_service(static_service)
             .with_state(web_state);
 
@@ -955,4 +964,96 @@ async fn api_task_irv_rounds(
         })).collect())
         .unwrap_or_default();
     Json(serde_json::json!({ "task_id": task_id, "irv_rounds": rounds }))
+}
+
+// ── Identity / Network / Directory API ──────────────────────────────────────
+
+async fn api_identity(State(web): State<WebState>) -> Json<serde_json::Value> {
+    let s = web.state.read().await;
+    let did = s.agent_id.to_string();
+    let peer_id = did.trim_start_matches("did:swarm:").to_string();
+    let name = s.agent_names.get(&did).cloned()
+        .unwrap_or_else(|| short_agent_label(&did));
+    Json(serde_json::json!({
+        "did": did,
+        "peer_id": peer_id,
+        "version": env!("CARGO_PKG_VERSION"),
+        "tier": format!("{:?}", s.my_tier),
+        "name": name,
+    }))
+}
+
+async fn api_network(State(web): State<WebState>) -> Json<serde_json::Value> {
+    let s = web.state.read().await;
+    let peer_count = s.agent_set.elements().len();
+    let known_agents = s.active_member_count(Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS));
+    Json(serde_json::json!({
+        "peer_count": peer_count,
+        "known_agents": known_agents,
+        "agent_id": s.agent_id.to_string(),
+    }))
+}
+
+async fn api_reputation(State(web): State<WebState>) -> Json<serde_json::Value> {
+    let s = web.state.read().await;
+    let reputation: Vec<serde_json::Value> = s.agent_activity.iter().map(|(id, activity)| {
+        serde_json::json!({
+            "agent_id": id,
+            "name": s.agent_names.get(id).cloned().unwrap_or_else(|| short_agent_label(id)),
+            "tasks_assigned": activity.tasks_assigned_count,
+            "tasks_processed": activity.tasks_processed_count,
+            "plans_proposed": activity.plans_proposed_count,
+            "votes_cast": activity.votes_cast_count,
+        })
+    }).collect();
+    Json(serde_json::json!({ "reputation": reputation }))
+}
+
+async fn api_directory(State(web): State<WebState>) -> Json<serde_json::Value> {
+    let s = web.state.read().await;
+    let agents: Vec<serde_json::Value> = s.agent_names.iter().map(|(id, name)| {
+        serde_json::json!({
+            "did": id,
+            "name": name,
+            "tier": format!("{:?}", s.agent_tiers.get(id).copied().unwrap_or(Tier::Executor)),
+        })
+    }).collect();
+    Json(serde_json::json!({ "agents": agents }))
+}
+
+async fn api_names(State(web): State<WebState>) -> Json<serde_json::Value> {
+    let s = web.state.read().await;
+    let names: Vec<serde_json::Value> = s.name_registry.iter().map(|(name, did)| {
+        serde_json::json!({ "name": name, "did": did })
+    }).collect();
+    Json(serde_json::json!({ "names": names }))
+}
+
+async fn api_keys(State(web): State<WebState>) -> Json<serde_json::Value> {
+    let s = web.state.read().await;
+    let keys: Vec<serde_json::Value> = s.agent_names.keys().map(|id| {
+        serde_json::json!({ "agent_id": id })
+    }).collect();
+    Json(serde_json::json!({ "keys": keys }))
+}
+
+async fn api_events(
+    State(web): State<WebState>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let state = web.state;
+    let stream = futures_util::stream::unfold(state, |state| async move {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let payload = {
+            let s = state.read().await;
+            serde_json::json!({
+                "type": "snapshot",
+                "active_tasks": s.task_set.len(),
+                "known_agents": s.active_member_count(Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS)),
+            })
+            .to_string()
+        };
+        let event = Event::default().event("snapshot").data(payload);
+        Some((Ok(event), state))
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }

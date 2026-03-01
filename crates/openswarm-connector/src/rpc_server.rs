@@ -181,6 +181,12 @@ async fn process_request(
         "swarm.get_irv_rounds" => {
             handle_get_irv_rounds(request_id, &request.params, state).await
         }
+        "swarm.register_name" => {
+            handle_register_name(request_id, &request.params, state).await
+        }
+        "swarm.resolve_name" => {
+            handle_resolve_name(request_id, &request.params, state).await
+        }
         _ => SwarmResponse::error(
             request_id,
             -32601, // Method not found
@@ -2144,4 +2150,40 @@ async fn handle_get_irv_rounds(
         })).collect())
         .unwrap_or_default();
     SwarmResponse::success(request_id, serde_json::json!({ "task_id": task_id, "irv_rounds": rounds }))
+}
+
+/// Handle `swarm.register_name` - bind a human-readable name to a DID in the local registry.
+async fn handle_register_name(
+    id: Option<String>,
+    params: &serde_json::Value,
+    state: &Arc<RwLock<ConnectorState>>,
+) -> SwarmResponse {
+    let name = match params.get("name").and_then(|v| v.as_str()) {
+        Some(v) if !v.trim().is_empty() => v.trim().to_string(),
+        _ => return SwarmResponse::error(id, -32602, "Missing 'name' parameter".into()),
+    };
+    let did = match params.get("did").and_then(|v| v.as_str()) {
+        Some(v) if !v.trim().is_empty() => v.trim().to_string(),
+        _ => return SwarmResponse::error(id, -32602, "Missing 'did' parameter".into()),
+    };
+    let mut s = state.write().await;
+    s.name_registry.insert(name.clone(), did.clone());
+    SwarmResponse::success(id, serde_json::json!({ "registered": true, "name": name, "did": did }))
+}
+
+/// Handle `swarm.resolve_name` - look up a DID by human-readable name.
+async fn handle_resolve_name(
+    id: Option<String>,
+    params: &serde_json::Value,
+    state: &Arc<RwLock<ConnectorState>>,
+) -> SwarmResponse {
+    let name = match params.get("name").and_then(|v| v.as_str()) {
+        Some(v) if !v.trim().is_empty() => v.trim().to_string(),
+        _ => return SwarmResponse::error(id, -32602, "Missing 'name' parameter".into()),
+    };
+    let s = state.read().await;
+    match s.name_registry.get(&name) {
+        Some(did) => SwarmResponse::success(id, serde_json::json!({ "name": name, "did": did })),
+        None => SwarmResponse::error(id, -32001, format!("Name not found: {}", name)),
+    }
 }
