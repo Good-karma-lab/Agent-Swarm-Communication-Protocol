@@ -548,6 +548,12 @@ impl WwsConnector {
 
         self.subscribe_task_assignment_topics(&swarm_id_str).await;
 
+        // Subscribe to the direct messages topic for this swarm.
+        let messages_topic = SwarmTopics::messages_for(&swarm_id_str);
+        if let Err(e) = self.network_handle.subscribe(&messages_topic).await {
+            tracing::debug!(error = %e, topic = %messages_topic, "Failed to subscribe messages topic");
+        }
+
         // Connect to bootstrap peers to join the swarm network immediately.
         self.connect_to_bootstrap_peers().await;
 
@@ -1710,6 +1716,35 @@ impl WwsConnector {
                             params.voter_id, params.task_id, params.round, params.plan_scores.len()
                         ),
                     );
+                }
+            }
+            Some(ProtocolMethod::AgentDirectMessage) => {
+                if let Ok(params) = serde_json::from_value::<DirectMessageParams>(message.params) {
+                    let message_type_enum = match params.message_type.as_str() {
+                        "greeting" => MessageType::Greeting,
+                        "question" => MessageType::Question,
+                        "comment" => MessageType::Comment,
+                        "broadcast" => MessageType::Broadcast,
+                        "work" => MessageType::Work,
+                        _ => MessageType::Social,
+                    };
+                    let dm = DirectMessage {
+                        id: params.message_id.clone(),
+                        sender_did: params.sender_did.clone(),
+                        recipient_did: params.recipient_did.clone(),
+                        content: params.content.clone(),
+                        message_type: message_type_enum,
+                        timestamp: chrono::Utc::now(),
+                    };
+                    let mut state = self.state.write().await;
+                    state.push_log(
+                        LogCategory::Message,
+                        format!(
+                            "Direct message from {}: {}",
+                            params.sender_did, params.content
+                        ),
+                    );
+                    state.push_direct_message(dm);
                 }
             }
             _ => {

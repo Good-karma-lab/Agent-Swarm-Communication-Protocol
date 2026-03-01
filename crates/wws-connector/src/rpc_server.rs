@@ -198,6 +198,9 @@ async fn process_request(
         "swarm.verify_agent" => {
             handle_verify_agent(request_id, &request.params, state).await
         }
+        "swarm.send_message" => {
+            handle_send_message(request_id, &request.params, state, network_handle).await
+        }
         _ => SwarmResponse::error(
             request_id,
             -32601, // Method not found
@@ -2563,6 +2566,77 @@ async fn handle_my_names(
         .collect();
 
     SwarmResponse::success(request_id, serde_json::json!({ "names": names }))
+}
+
+/// Handle `swarm.send_message` — publish a direct message via GossipSub and store locally.
+///
+/// Params: `{ "content": <str>, "recipient_did"?: <str>, "message_type"?: <str> }`
+/// Returns: `{ "ok": true, "message_id": <str> }`
+async fn handle_send_message(
+    id: Option<String>,
+    params: &serde_json::Value,
+    state: &Arc<RwLock<ConnectorState>>,
+    network_handle: &wws_network::SwarmHandle,
+) -> SwarmResponse {
+    let content = match params.get("content").and_then(|v| v.as_str()) {
+        Some(c) if !c.is_empty() => c.to_string(),
+        _ => return SwarmResponse::error(id, -32602, "missing content".to_string()),
+    };
+    let recipient_did = params.get("recipient_did").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let message_type = params
+        .get("message_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("social")
+        .to_string();
+
+    let (sender_did, swarm_id) = {
+        let state_read = state.read().await;
+        (state_read.agent_id.to_string(), state_read.current_swarm_id.as_str().to_string())
+    };
+
+    let message_id = uuid::Uuid::new_v4().to_string();
+    let dm_params = DirectMessageParams {
+        message_id: message_id.clone(),
+        sender_did: sender_did.clone(),
+        recipient_did: recipient_did.clone(),
+        content: content.clone(),
+        message_type: message_type.clone(),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    };
+
+    let gossip_msg = SwarmMessage::new(
+        ProtocolMethod::AgentDirectMessage.as_str(),
+        serde_json::to_value(&dm_params).unwrap_or_default(),
+        String::new(),
+    );
+
+    let topic = SwarmTopics::messages_for(&swarm_id);
+    if let Ok(data) = serde_json::to_vec(&gossip_msg) {
+        if let Err(e) = network_handle.publish(&topic, data).await {
+            tracing::warn!("Failed to publish direct message: {}", e);
+        }
+    }
+
+    // Store locally — sender does not receive its own gossip message.
+    let message_type_enum = match message_type.as_str() {
+        "greeting" => MessageType::Greeting,
+        "question" => MessageType::Question,
+        "comment" => MessageType::Comment,
+        "broadcast" => MessageType::Broadcast,
+        "work" => MessageType::Work,
+        _ => MessageType::Social,
+    };
+    let dm = DirectMessage {
+        id: message_id.clone(),
+        sender_did,
+        recipient_did,
+        content,
+        message_type: message_type_enum,
+        timestamp: chrono::Utc::now(),
+    };
+    state.write().await.push_direct_message(dm);
+
+    SwarmResponse::success(id, serde_json::json!({ "ok": true, "message_id": message_id }))
 }
 
 #[cfg(test)]

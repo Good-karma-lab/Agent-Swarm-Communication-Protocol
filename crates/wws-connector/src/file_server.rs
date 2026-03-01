@@ -401,7 +401,24 @@ async fn voting_payload(
 }
 
 async fn api_messages(State(web): State<WebState>) -> Json<serde_json::Value> {
-    Json(messages_payload(&web.state, None).await)
+    let s = web.state.read().await;
+    let messages: Vec<serde_json::Value> = s
+        .direct_messages
+        .iter()
+        .rev()
+        .take(500)
+        .map(|dm| {
+            serde_json::json!({
+                "id": dm.id,
+                "sender_did": dm.sender_did,
+                "recipient_did": dm.recipient_did,
+                "content": dm.content,
+                "message_type": format!("{:?}", dm.message_type).to_lowercase(),
+                "timestamp": dm.timestamp,
+            })
+        })
+        .collect();
+    Json(serde_json::json!(messages))
 }
 
 async fn api_messages_task(

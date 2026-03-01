@@ -308,6 +308,20 @@ pub struct DiscussionCritiqueParams {
     pub content: String,
 }
 
+/// Direct P2P message between agents, propagated via GossipSub on the messages topic.
+/// Uses String for message_type to avoid enum serialization complexity on the wire.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectMessageParams {
+    pub message_id: String,
+    pub sender_did: String,
+    pub recipient_did: Option<String>,
+    pub content: String,
+    /// "greeting" | "social" | "question" | "comment" | "broadcast" | "work"
+    pub message_type: String,
+    /// ISO 8601 timestamp
+    pub timestamp: String,
+}
+
 /// Enumeration of all protocol methods for pattern matching.
 #[derive(Debug, Clone)]
 pub enum ProtocolMethod {
@@ -335,6 +349,7 @@ pub enum ProtocolMethod {
     BoardReady,
     BoardDissolve,
     DiscussionCritique,
+    AgentDirectMessage,
 }
 
 impl ProtocolMethod {
@@ -364,6 +379,7 @@ impl ProtocolMethod {
             Self::BoardReady => "board.ready",
             Self::BoardDissolve => "board.dissolve",
             Self::DiscussionCritique => "discussion.critique",
+            Self::AgentDirectMessage => "agent.direct_message",
         }
     }
 
@@ -393,6 +409,7 @@ impl ProtocolMethod {
             "board.ready" => Some(Self::BoardReady),
             "board.dissolve" => Some(Self::BoardDissolve),
             "discussion.critique" => Some(Self::DiscussionCritique),
+            "agent.direct_message" => Some(Self::AgentDirectMessage),
             _ => None,
         }
     }
@@ -478,6 +495,14 @@ impl SwarmTopics {
 
     pub fn board_for(swarm_id: &str, task_id: &str) -> String {
         format!("{}/s/{}/board/{}", crate::constants::TOPIC_PREFIX, swarm_id, task_id)
+    }
+
+    pub fn messages() -> String {
+        Self::messages_for(crate::constants::DEFAULT_SWARM_ID)
+    }
+
+    pub fn messages_for(swarm_id: &str) -> String {
+        format!("{}/s/{}/messages", crate::constants::TOPIC_PREFIX, swarm_id)
     }
 }
 
