@@ -13,6 +13,10 @@
 //! - `swarm.list_swarms()` - List all known swarms with their info
 //! - `swarm.create_swarm()` - Create a new private swarm
 //! - `swarm.join_swarm()` - Join an existing swarm
+//! - `swarm.register_name()` - Bind a human-readable name to a DID
+//! - `swarm.resolve_name()` - Resolve a name to a DID
+//! - `swarm.send_message()` - Send a direct message to another agent
+//! - `swarm.get_messages()` - Retrieve inbox messages
 //!
 //! The server listens on localhost TCP and speaks JSON-RPC 2.0.
 //! Each line received is a JSON-RPC request; each line sent is a response.
@@ -186,6 +190,12 @@ async fn process_request(
         }
         "swarm.resolve_name" => {
             handle_resolve_name(request_id, &request.params, state).await
+        }
+        "swarm.send_message" => {
+            handle_send_message(request_id, &request.params, state, network_handle).await
+        }
+        "swarm.get_messages" => {
+            handle_get_messages(request_id, state).await
         }
         _ => SwarmResponse::error(
             request_id,
@@ -2241,4 +2251,69 @@ async fn handle_resolve_name(
         Some(did) => SwarmResponse::success(id, serde_json::json!({ "name": name, "did": did })),
         None => SwarmResponse::error(id, -32001, format!("Name not found: {}", name)),
     }
+}
+
+/// Handle `swarm.send_message` - send a direct message to another agent.
+///
+/// Publishes an `agent.direct_message` on the shared DM GossipSub topic.
+/// The receiving agent's connector filters by the `to` field and stores it
+/// in its inbox.
+///
+/// Required params: `to` (recipient DID), `content` (message text).
+async fn handle_send_message(
+    id: Option<String>,
+    params: &serde_json::Value,
+    state: &Arc<RwLock<ConnectorState>>,
+    network_handle: &openswarm_network::SwarmHandle,
+) -> SwarmResponse {
+    let to = match params.get("to").and_then(|v| v.as_str()) {
+        Some(v) if !v.trim().is_empty() => v.trim().to_string(),
+        _ => return SwarmResponse::error(id, -32602, "Missing 'to' parameter".into()),
+    };
+    let content = match params.get("content").and_then(|v| v.as_str()) {
+        Some(v) if !v.trim().is_empty() => v.trim().to_string(),
+        _ => return SwarmResponse::error(id, -32602, "Missing 'content' parameter".into()),
+    };
+
+    let (from, swarm_id) = {
+        let s = state.read().await;
+        (s.agent_id.to_string(), s.current_swarm_id.as_str().to_string())
+    };
+
+    let topic = SwarmTopics::dm_for(&swarm_id);
+    let msg = SwarmMessage::new(
+        ProtocolMethod::DirectMessage.as_str(),
+        serde_json::json!({ "from": from, "to": to, "content": content }),
+        String::new(),
+    );
+    if let Ok(data) = serde_json::to_vec(&msg) {
+        if let Err(e) = network_handle.publish(&topic, data).await {
+            return SwarmResponse::error(id, -32000, format!("Failed to publish message: {}", e));
+        }
+    }
+
+    SwarmResponse::success(id, serde_json::json!({ "sent": true, "to": to }))
+}
+
+/// Handle `swarm.get_messages` - retrieve all messages in the inbox.
+///
+/// Returns messages addressed to this agent's DID that arrived since startup.
+async fn handle_get_messages(
+    id: Option<String>,
+    state: &Arc<RwLock<ConnectorState>>,
+) -> SwarmResponse {
+    let s = state.read().await;
+    let messages: Vec<serde_json::Value> = s
+        .inbox
+        .iter()
+        .map(|m| {
+            serde_json::json!({
+                "from": m.from,
+                "to": m.to,
+                "content": m.content,
+                "timestamp": m.timestamp.to_rfc3339(),
+            })
+        })
+        .collect();
+    SwarmResponse::success(id, serde_json::json!({ "messages": messages, "count": messages.len() }))
 }

@@ -335,6 +335,8 @@ pub enum ProtocolMethod {
     BoardReady,
     BoardDissolve,
     DiscussionCritique,
+    /// Agent-to-agent direct message (broadcast on shared DM topic, filtered by `to` field).
+    DirectMessage,
 }
 
 impl ProtocolMethod {
@@ -364,6 +366,7 @@ impl ProtocolMethod {
             Self::BoardReady => "board.ready",
             Self::BoardDissolve => "board.dissolve",
             Self::DiscussionCritique => "discussion.critique",
+            Self::DirectMessage => "agent.direct_message",
         }
     }
 
@@ -393,6 +396,7 @@ impl ProtocolMethod {
             "board.ready" => Some(Self::BoardReady),
             "board.dissolve" => Some(Self::BoardDissolve),
             "discussion.critique" => Some(Self::DiscussionCritique),
+            "agent.direct_message" => Some(Self::DirectMessage),
             _ => None,
         }
     }
@@ -478,6 +482,12 @@ impl SwarmTopics {
 
     pub fn board_for(swarm_id: &str, task_id: &str) -> String {
         format!("{}/s/{}/board/{}", crate::constants::TOPIC_PREFIX, swarm_id, task_id)
+    }
+
+    /// Shared direct-message topic for a swarm.
+    /// All agents subscribe to this topic; each filters messages addressed to itself.
+    pub fn dm_for(swarm_id: &str) -> String {
+        format!("{}/s/{}/dm", crate::constants::TOPIC_PREFIX, swarm_id)
     }
 }
 

@@ -109,6 +109,7 @@ impl FileServer {
             .route("/api/directory", get(api_directory))
             .route("/api/names", get(api_names))
             .route("/api/keys", get(api_keys))
+            .route("/api/inbox", get(api_inbox))
             .route("/api/events", get(api_events))
             .nest_service("/assets", assets_service)
             .fallback(spa_index)
@@ -690,6 +691,12 @@ async fn api_agents(State(web): State<WebState>) -> Json<serde_json::Value> {
             let reputation_score = (0.25_f64 * 0.5 + 0.40 * reputation + 0.20 * uptime) * 100.0 / 100.0;
             let reputation_score = (reputation_score * 100.0).round() / 100.0;
             let can_inject_tasks = id == s.agent_id.to_string() || tasks_processed >= 1;
+            // The self-agent is always connected — GossipSub doesn't echo messages
+            // back to the sender, so seen_secs is unreliable for the local agent.
+            let is_self = id == s.agent_id.to_string();
+            let connected = is_self || seen_secs.map(|v| v <= 60).unwrap_or(false);
+            let loop_active = is_self || last_task_poll_secs.map(|v| v <= 120).unwrap_or(false);
+            let not_responding = !is_self && last_task_poll_secs.map(|v| v > 180).unwrap_or(true);
             serde_json::json!({
                 "agent_id": id,
                 "name": s.agent_names.get(&id).cloned().unwrap_or_else(|| short_agent_label(&id)),
@@ -704,10 +711,10 @@ async fn api_agents(State(web): State<WebState>) -> Json<serde_json::Value> {
                 "votes_cast_count": activity.map(|a| a.votes_cast_count).unwrap_or(0),
                 "reputation_score": reputation_score,
                 "can_inject_tasks": can_inject_tasks,
-                "is_self": id == s.agent_id.to_string(),
-                "connected": seen_secs.map(|v| v <= 60).unwrap_or(false),
-                "loop_active": last_task_poll_secs.map(|v| v <= 120).unwrap_or(false),
-                "not_responding": last_task_poll_secs.map(|v| v > 180).unwrap_or(true),
+                "is_self": is_self,
+                "connected": connected,
+                "loop_active": loop_active,
+                "not_responding": not_responding,
             })
         })
         .collect::<Vec<_>>();
@@ -1111,6 +1118,19 @@ async fn api_keys(State(web): State<WebState>) -> Json<serde_json::Value> {
         serde_json::json!({ "agent_id": id })
     }).collect();
     Json(serde_json::json!({ "keys": keys }))
+}
+
+async fn api_inbox(State(web): State<WebState>) -> Json<serde_json::Value> {
+    let s = web.state.read().await;
+    let messages: Vec<serde_json::Value> = s.inbox.iter().map(|m| {
+        serde_json::json!({
+            "from": m.from,
+            "to": m.to,
+            "content": m.content,
+            "timestamp": m.timestamp.to_rfc3339(),
+        })
+    }).collect();
+    Json(serde_json::json!({ "messages": messages, "count": messages.len() }))
 }
 
 async fn api_events(

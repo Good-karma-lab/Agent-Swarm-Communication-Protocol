@@ -83,6 +83,15 @@ pub struct AgentActivity {
     pub tasks_injected_count: u64,
 }
 
+/// A direct message received from another agent via the swarm DM topic.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InboxMessage {
+    pub from: String,
+    pub to: String,
+    pub content: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct TaskVoteRequirement {
     pub expected_proposers: usize,
@@ -197,6 +206,8 @@ pub struct ConnectorState {
     pub board_acceptances: std::collections::HashMap<String, Vec<BoardAcceptParams>>,
     /// Agent name registry: human-readable name -> DID.
     pub name_registry: std::collections::HashMap<String, String>,
+    /// Inbox of direct messages received from other agents.
+    pub inbox: Vec<InboxMessage>,
 }
 
 /// Minimum tasks an agent must have completed to inject tasks into the swarm.
@@ -503,6 +514,7 @@ impl OpenSwarmConnector {
             irv_rounds: std::collections::HashMap::new(),
             board_acceptances: std::collections::HashMap::new(),
             name_registry: std::collections::HashMap::new(),
+            inbox: Vec::new(),
         };
 
         Ok(Self {
@@ -544,6 +556,12 @@ impl OpenSwarmConnector {
         }
 
         self.subscribe_task_assignment_topics(&swarm_id_str).await;
+
+        // Subscribe to the shared DM topic so we receive direct messages.
+        let dm_topic = openswarm_protocol::SwarmTopics::dm_for(&swarm_id_str);
+        if let Err(e) = self.network_handle.subscribe(&dm_topic).await {
+            tracing::warn!(err = %e, "Failed to subscribe to DM topic");
+        }
 
         // Connect to bootstrap peers to join the swarm network immediately.
         self.connect_to_bootstrap_peers().await;
@@ -1695,6 +1713,27 @@ impl OpenSwarmConnector {
                             "Critique from {} for task {} (round {}, {} plan scores)",
                             params.voter_id, params.task_id, params.round, params.plan_scores.len()
                         ),
+                    );
+                }
+            }
+            Some(ProtocolMethod::DirectMessage) => {
+                // A direct message addressed to an agent on the swarm DM topic.
+                // Filter: only store if addressed to this connector's agent.
+                let to = message.params.get("to").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let from = message.params.get("from").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let content = message.params.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let mut state = self.state.write().await;
+                let my_id = state.agent_id.to_string();
+                if to == my_id && !from.is_empty() && !content.is_empty() {
+                    state.inbox.push(InboxMessage {
+                        from: from.clone(),
+                        to: to.clone(),
+                        content: content.clone(),
+                        timestamp: chrono::Utc::now(),
+                    });
+                    state.push_log(
+                        LogCategory::Message,
+                        format!("DM from {}: {}", &from[..from.len().min(20)], &content[..content.len().min(80)]),
                     );
                 }
             }
@@ -3009,6 +3048,7 @@ impl ConnectorState {
             irv_rounds: std::collections::HashMap::new(),
             board_acceptances: std::collections::HashMap::new(),
             name_registry: std::collections::HashMap::new(),
+            inbox: Vec::new(),
         }
     }
 }
@@ -3183,5 +3223,42 @@ mod tests {
             ..Default::default()
         });
         assert!(!state.has_inject_reputation(&agent_id));
+    }
+
+    #[test]
+    fn test_inbox_starts_empty() {
+        let state = ConnectorState::new_for_test();
+        assert!(state.inbox.is_empty());
+    }
+
+    #[test]
+    fn test_inbox_stores_messages_addressed_to_self() {
+        let mut state = ConnectorState::new_for_test();
+        let my_id = state.agent_id.to_string();
+        // Message addressed to self gets stored.
+        state.inbox.push(InboxMessage {
+            from: "did:swarm:sender".to_string(),
+            to: my_id.clone(),
+            content: "hello from the swarm".to_string(),
+            timestamp: chrono::Utc::now(),
+        });
+        assert_eq!(state.inbox.len(), 1);
+        assert_eq!(state.inbox[0].from, "did:swarm:sender");
+        assert_eq!(state.inbox[0].content, "hello from the swarm");
+    }
+
+    #[test]
+    fn test_inbox_can_hold_multiple_messages() {
+        let mut state = ConnectorState::new_for_test();
+        let my_id = state.agent_id.to_string();
+        for i in 0..5 {
+            state.inbox.push(InboxMessage {
+                from: format!("did:swarm:agent-{}", i),
+                to: my_id.clone(),
+                content: format!("message {}", i),
+                timestamp: chrono::Utc::now(),
+            });
+        }
+        assert_eq!(state.inbox.len(), 5);
     }
 }
