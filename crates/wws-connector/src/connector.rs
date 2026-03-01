@@ -1720,20 +1720,14 @@ impl WwsConnector {
             }
             Some(ProtocolMethod::AgentDirectMessage) => {
                 if let Ok(params) = serde_json::from_value::<DirectMessageParams>(message.params) {
-                    let message_type_enum = match params.message_type.as_str() {
-                        "greeting" => MessageType::Greeting,
-                        "question" => MessageType::Question,
-                        "comment" => MessageType::Comment,
-                        "broadcast" => MessageType::Broadcast,
-                        "work" => MessageType::Work,
-                        _ => MessageType::Social,
-                    };
+                    // recipient_did is advisory — all nodes store all messages on this topic;
+                    // agents filter by recipient_did when reading /api/messages.
                     let dm = DirectMessage {
                         id: params.message_id.clone(),
                         sender_did: params.sender_did.clone(),
                         recipient_did: params.recipient_did.clone(),
                         content: params.content.clone(),
-                        message_type: message_type_enum,
+                        message_type: MessageType::from(params.message_type.as_str()),
                         timestamp: chrono::Utc::now(),
                     };
                     let mut state = self.state.write().await;

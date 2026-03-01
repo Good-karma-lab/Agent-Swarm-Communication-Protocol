@@ -578,12 +578,82 @@ mod tests {
             ProtocolMethod::BoardReady,
             ProtocolMethod::BoardDissolve,
             ProtocolMethod::DiscussionCritique,
+            ProtocolMethod::AgentDirectMessage,
         ];
         for method in methods {
             let s = method.as_str();
             let parsed = ProtocolMethod::from_str(s);
             assert!(parsed.is_some(), "Failed to parse: {}", s);
         }
+    }
+
+    #[test]
+    fn test_direct_message_params_serialization_roundtrip() {
+        let params = DirectMessageParams {
+            message_id: "msg-001".to_string(),
+            sender_did: "did:swarm:sender".to_string(),
+            recipient_did: Some("did:swarm:recipient".to_string()),
+            content: "Hello, agent!".to_string(),
+            message_type: "greeting".to_string(),
+            timestamp: "2026-01-01T00:00:00Z".to_string(),
+        };
+
+        let json = serde_json::to_string(&params).unwrap();
+        let restored: DirectMessageParams = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.message_id, "msg-001");
+        assert_eq!(restored.sender_did, "did:swarm:sender");
+        assert_eq!(restored.recipient_did, Some("did:swarm:recipient".to_string()));
+        assert_eq!(restored.content, "Hello, agent!");
+        assert_eq!(restored.message_type, "greeting");
+        assert_eq!(restored.timestamp, "2026-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn test_direct_message_params_broadcast_no_recipient() {
+        let params = DirectMessageParams {
+            message_id: "msg-broadcast".to_string(),
+            sender_did: "did:swarm:broadcaster".to_string(),
+            recipient_did: None,
+            content: "Attention all agents".to_string(),
+            message_type: "broadcast".to_string(),
+            timestamp: "2026-01-01T12:00:00Z".to_string(),
+        };
+
+        let json = serde_json::to_string(&params).unwrap();
+        let restored: DirectMessageParams = serde_json::from_str(&json).unwrap();
+
+        assert!(restored.recipient_did.is_none());
+        assert_eq!(restored.message_type, "broadcast");
+    }
+
+    #[test]
+    fn test_agent_direct_message_in_swarm_message() {
+        let dm_params = DirectMessageParams {
+            message_id: "dm-999".to_string(),
+            sender_did: "did:swarm:alice".to_string(),
+            recipient_did: Some("did:swarm:bob".to_string()),
+            content: "Can you handle task-7?".to_string(),
+            message_type: "work".to_string(),
+            timestamp: "2026-03-01T08:00:00Z".to_string(),
+        };
+
+        let msg = SwarmMessage::new(
+            ProtocolMethod::AgentDirectMessage.as_str(),
+            serde_json::to_value(&dm_params).unwrap(),
+            "sig".to_string(),
+        );
+
+        let json = serde_json::to_string(&msg).unwrap();
+        let restored: SwarmMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.method, "agent.direct_message");
+
+        let restored_params: DirectMessageParams =
+            serde_json::from_value(restored.params).unwrap();
+        assert_eq!(restored_params.message_id, "dm-999");
+        assert_eq!(restored_params.sender_did, "did:swarm:alice");
+        assert_eq!(restored_params.recipient_did, Some("did:swarm:bob".to_string()));
+        assert_eq!(restored_params.message_type, "work");
     }
 
     #[test]

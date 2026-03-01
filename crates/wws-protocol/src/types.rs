@@ -481,6 +481,19 @@ pub enum MessageType {
     Work,
 }
 
+impl From<&str> for MessageType {
+    fn from(s: &str) -> Self {
+        match s {
+            "greeting" => MessageType::Greeting,
+            "question" => MessageType::Question,
+            "comment" => MessageType::Comment,
+            "broadcast" => MessageType::Broadcast,
+            "work" => MessageType::Work,
+            _ => MessageType::Social,
+        }
+    }
+}
+
 /// A direct P2P message between agents (stored after gossip delivery)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DirectMessage {
@@ -880,6 +893,19 @@ mod tests {
         assert!(!task.backtrack_allowed);
         assert!(task.knowledge_domains.is_empty());
         assert!(task.tools_available.is_empty());
+    }
+
+    #[test]
+    fn test_message_type_from_str() {
+        assert_eq!(MessageType::from("greeting"), MessageType::Greeting);
+        assert_eq!(MessageType::from("question"), MessageType::Question);
+        assert_eq!(MessageType::from("comment"), MessageType::Comment);
+        assert_eq!(MessageType::from("broadcast"), MessageType::Broadcast);
+        assert_eq!(MessageType::from("work"), MessageType::Work);
+        // unknown strings fall back to Social
+        assert_eq!(MessageType::from("social"), MessageType::Social);
+        assert_eq!(MessageType::from("unknown"), MessageType::Social);
+        assert_eq!(MessageType::from(""), MessageType::Social);
     }
 
     #[test]

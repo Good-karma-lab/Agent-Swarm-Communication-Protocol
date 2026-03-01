@@ -2594,6 +2594,7 @@ async fn handle_send_message(
         (state_read.agent_id.to_string(), state_read.current_swarm_id.as_str().to_string())
     };
 
+    let now = chrono::Utc::now();
     let message_id = uuid::Uuid::new_v4().to_string();
     let dm_params = DirectMessageParams {
         message_id: message_id.clone(),
@@ -2601,7 +2602,7 @@ async fn handle_send_message(
         recipient_did: recipient_did.clone(),
         content: content.clone(),
         message_type: message_type.clone(),
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: now.to_rfc3339(),
     };
 
     let gossip_msg = SwarmMessage::new(
@@ -2613,26 +2614,18 @@ async fn handle_send_message(
     let topic = SwarmTopics::messages_for(&swarm_id);
     if let Ok(data) = serde_json::to_vec(&gossip_msg) {
         if let Err(e) = network_handle.publish(&topic, data).await {
-            tracing::warn!("Failed to publish direct message: {}", e);
+            tracing::warn!(error = %e, "Failed to publish direct message");
         }
     }
 
     // Store locally — sender does not receive its own gossip message.
-    let message_type_enum = match message_type.as_str() {
-        "greeting" => MessageType::Greeting,
-        "question" => MessageType::Question,
-        "comment" => MessageType::Comment,
-        "broadcast" => MessageType::Broadcast,
-        "work" => MessageType::Work,
-        _ => MessageType::Social,
-    };
     let dm = DirectMessage {
         id: message_id.clone(),
         sender_did,
         recipient_did,
         content,
-        message_type: message_type_enum,
-        timestamp: chrono::Utc::now(),
+        message_type: MessageType::from(message_type.as_str()),
+        timestamp: now,
     };
     state.write().await.push_direct_message(dm);
 
