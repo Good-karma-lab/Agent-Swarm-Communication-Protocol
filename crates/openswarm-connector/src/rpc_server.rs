@@ -309,6 +309,15 @@ async fn handle_submit_vote(
                     accepted_rankings.join(" > ")
                 ),
         );
+        // Record own ballot immediately (P2P won't echo back to sender)
+        state.ballot_records.entry(task_id.clone()).or_default().push(BallotRecord {
+            task_id: task_id.clone(),
+            voter: voter.clone(),
+            rankings: accepted_rankings.clone(),
+            critic_scores: std::collections::HashMap::new(),
+            timestamp: chrono::Utc::now(),
+            irv_round_when_eliminated: None,
+        });
 
         (
             voter,
@@ -425,6 +434,13 @@ async fn handle_submit_critique(
                 HolonStatus::Forming | HolonStatus::Deliberating
             ) {
                 holon.status = HolonStatus::Voting;
+            }
+        }
+
+        // Update own BallotRecord with critic_scores from this critique
+        if let Some(ballots) = state.ballot_records.get_mut(&task_id) {
+            if let Some(own_ballot) = ballots.iter_mut().find(|b| b.voter == voter) {
+                own_ballot.critic_scores = plan_scores.clone();
             }
         }
 
@@ -645,10 +661,13 @@ pub(crate) async fn handle_propose_plan(
             .map(|t| t.tier_level)
             .unwrap_or(1);
         let tier = tier_from_level(task_tier_level);
-        let expected_proposers =
-            active_members_in_tier(&state, tier, Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS))
-                .len()
-                .max(1);
+        let in_tier = active_members_in_tier(&state, tier, Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS)).len();
+        let expected_proposers = if in_tier > 0 {
+            in_tier
+        } else {
+            // No agents of the required tier (small swarm); fall back to all active agents
+            state.active_member_ids(Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS)).len()
+        }.max(1);
 
         let commit = ProposalCommitParams {
             task_id: plan.task_id.clone(),
@@ -801,7 +820,11 @@ pub(crate) async fn handle_propose_plan(
             .unwrap_or(1);
         let tier = tier_from_level(task_tier_level);
         let tier_members = active_members_in_tier(&state, tier, Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS));
-        let expected = tier_members.len().max(1);
+        let expected = if !tier_members.is_empty() {
+            tier_members.len()
+        } else {
+            state.active_member_ids(Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS)).len()
+        }.max(1);
         state.task_vote_requirements.insert(
             plan.task_id.clone(),
             crate::connector::TaskVoteRequirement {

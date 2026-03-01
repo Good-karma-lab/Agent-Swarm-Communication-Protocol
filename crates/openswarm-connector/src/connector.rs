@@ -2784,8 +2784,19 @@ impl OpenSwarmConnector {
 
     fn member_loop_active(state: &ConnectorState, agent_id: &str, max_staleness: Duration) -> bool {
         let now = chrono::Utc::now();
-        state
+        // Primary: agent called receive_task recently
+        let polled = state
             .member_last_task_poll
+            .get(agent_id)
+            .and_then(|ts| now.signed_duration_since(*ts).to_std().ok())
+            .map(|age| age <= max_staleness)
+            .unwrap_or(false);
+        if polled {
+            return true;
+        }
+        // Fallback: agent was seen via P2P (proposal, keepalive, vote, etc.)
+        state
+            .member_last_seen
             .get(agent_id)
             .and_then(|ts| now.signed_duration_since(*ts).to_std().ok())
             .map(|age| age <= max_staleness)
@@ -2818,9 +2829,13 @@ impl OpenSwarmConnector {
             .map(|t| t.tier_level)
             .or_else(|| state.task_vote_requirements.get(task_id).map(|r| r.tier_level))
             .unwrap_or(1);
-        let tier = Self::level_to_tier(tier_level);
-        state.agent_tiers.get(agent_id).copied().unwrap_or(Tier::Executor) == tier
-            && Self::member_loop_active(state, agent_id, poll_staleness)
+        let expected_tier = Self::level_to_tier(tier_level);
+        let agent_tier = state.agent_tiers.get(agent_id).copied().unwrap_or(Tier::Executor);
+        // Tier check: match expected tier, OR fall back to any agent when no
+        // agents of the expected tier exist (e.g. small swarm where everyone is Executor).
+        let tier_ok = agent_tier == expected_tier
+            || !state.agent_tiers.values().any(|t| *t == expected_tier);
+        tier_ok && Self::member_loop_active(state, agent_id, poll_staleness)
     }
 
     fn expected_vote_requirement_for_task(state: &ConnectorState, task_id: &str) -> TaskVoteRequirement {
@@ -2831,14 +2846,19 @@ impl OpenSwarmConnector {
             .or_else(|| state.task_vote_requirements.get(task_id).map(|r| r.tier_level))
             .unwrap_or(1);
         let tier = Self::level_to_tier(tier_level);
-        let expected = Self::active_participating_members_in_tier(
+        let in_tier = Self::active_participating_members_in_tier(
             state,
             tier,
             Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS),
             Duration::from_secs(PARTICIPATION_POLL_STALENESS_SECS),
         )
-            .len()
-            .max(1);
+            .len();
+        // Fall back to all active agents when no agents of the required tier exist
+        let expected = if in_tier > 0 {
+            in_tier
+        } else {
+            state.active_member_ids(Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS)).len()
+        }.max(1);
 
         TaskVoteRequirement {
             expected_proposers: expected,
