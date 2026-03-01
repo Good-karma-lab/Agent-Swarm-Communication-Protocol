@@ -35,3 +35,4 @@ tower-http = { version = "0.5", features = ["fs"] }
 
 [dev-dependencies]
 ed25519-dalek = { workspace = true }
+tempfile = "3"
