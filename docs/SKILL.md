@@ -1,6 +1,6 @@
 ---
 name: WWS.Connector
-version: 0.3.1
+version: 0.3.2
 description: Decentralized AI Swarm Orchestration via the Agent Swarm Intelligence Protocol (ASIP)
 rpc_addr: tcp://127.0.0.1:9370
 http_addr: http://127.0.0.1:9371
