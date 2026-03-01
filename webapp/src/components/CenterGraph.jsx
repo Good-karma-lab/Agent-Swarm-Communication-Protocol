@@ -27,7 +27,6 @@ export default function CenterGraph({ graphData, myPeerId, onSelectNode }) {
           stabilization: { iterations: 100 }
         },
         interaction: { hover: true, tooltipDelay: 200 },
-        background: { color: 'transparent' }
       }
 
       networkRef.current = new Network(containerRef.current, { nodes, edges }, options)
@@ -73,7 +72,7 @@ export default function CenterGraph({ graphData, myPeerId, onSelectNode }) {
       nodesDs.clear(); nodesDs.add(newNodes)
       edgesDs.clear(); edgesDs.add(newEdges)
 
-      if (myPeerId) {
+      if (myPeerId && nodesDs.get(myPeerId)) {
         try { net.focus(myPeerId, { scale: 1, animation: { duration: 500 } }) }
         catch (_) {}
       }
