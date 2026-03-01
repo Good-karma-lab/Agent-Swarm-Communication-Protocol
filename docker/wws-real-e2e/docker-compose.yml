@@ -1,0 +1,415 @@
+# WWS Real E2E — 9 connectors across 3 Docker subnets
+#
+# Network topology:
+#   wws-bootstrap-net (172.20.0.0/24): bootstrap relay only
+#   wws-tier1-net     (172.21.0.0/24): coordinator-alpha, coordinator-beta + bootstrap (multi-homed)
+#   wws-tier2-net     (172.22.0.0/24): 6 researcher/synth nodes   + bootstrap (multi-homed)
+#
+# Bootstrap is multi-homed on all 3 networks and acts as relay.
+# Tier1 <-> Tier2 can ONLY communicate via the bootstrap relay.
+#
+# Usage:
+#   1. Start bootstrap first:
+#        docker compose up -d bootstrap
+#   2. Get bootstrap peer ID from http://127.0.0.1:19371/api/identity
+#   3. Export BOOTSTRAP_PEER=<peer_id> and start the rest:
+#        BOOTSTRAP_PEER=<id> docker compose up -d connector-alpha connector-beta ...
+
+# ---------------------------------------------------------------------------
+# Networks
+# ---------------------------------------------------------------------------
+networks:
+  wws-bootstrap-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+  wws-tier1-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/24
+
+  wws-tier2-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.22.0.0/24
+
+# ---------------------------------------------------------------------------
+# Named volumes (persistent identity keys + state per node)
+# ---------------------------------------------------------------------------
+volumes:
+  bootstrap-data:
+  alpha-data:
+  beta-data:
+  raft-data:
+  pbft-data:
+  paxos-data:
+  tendermint-data:
+  hashgraph-data:
+  synth-data:
+
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+services:
+
+  # -------------------------------------------------------------------------
+  # Bootstrap relay node — multi-homed on all 3 subnets
+  # -------------------------------------------------------------------------
+  bootstrap:
+    image: wws-connector:latest
+    container_name: wws-bootstrap
+    restart: unless-stopped
+    command:
+      - --listen
+      - /ip4/0.0.0.0/tcp/9000
+      - --rpc
+      - 0.0.0.0:9370
+      - --files-addr
+      - 0.0.0.0:9371
+      - --agent-name
+      - bootstrap
+      - --identity-path
+      - /data/bootstrap.key
+      - --bootstrap-mode
+    volumes:
+      - bootstrap-data:/data
+    networks:
+      wws-bootstrap-net:
+        ipv4_address: 172.20.0.10
+      wws-tier1-net:
+        ipv4_address: 172.21.0.100
+      wws-tier2-net:
+        ipv4_address: 172.22.0.100
+    ports:
+      # HTTP file server (health + identity queries)
+      - "19371:9371"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9371/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  # -------------------------------------------------------------------------
+  # Tier1 — coordinator-alpha (wws-tier1-net only)
+  # -------------------------------------------------------------------------
+  connector-alpha:
+    image: wws-connector:latest
+    container_name: wws-connector-alpha
+    restart: unless-stopped
+    environment:
+      BOOTSTRAP_PEER: ${BOOTSTRAP_PEER:-12D3KooWDummyPlaceholder}
+    command:
+      - --listen
+      - /ip4/0.0.0.0/tcp/9000
+      - --rpc
+      - 0.0.0.0:9370
+      - --files-addr
+      - 0.0.0.0:9371
+      - --agent-name
+      - connector-alpha
+      - --identity-path
+      - /data/connector-alpha.key
+      - --bootstrap
+      - /ip4/172.21.0.100/tcp/9000/p2p/${BOOTSTRAP_PEER:-12D3KooWDummyPlaceholder}
+    volumes:
+      - alpha-data:/data
+    networks:
+      wws-tier1-net:
+        ipv4_address: 172.21.0.10
+    ports:
+      - "19370:9370"   # RPC
+      - "19381:9371"   # HTTP
+    depends_on:
+      bootstrap:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9371/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+
+  # -------------------------------------------------------------------------
+  # Tier1 — coordinator-beta (wws-tier1-net only)
+  # -------------------------------------------------------------------------
+  connector-beta:
+    image: wws-connector:latest
+    container_name: wws-connector-beta
+    restart: unless-stopped
+    environment:
+      BOOTSTRAP_PEER: ${BOOTSTRAP_PEER:-12D3KooWDummyPlaceholder}
+    command:
+      - --listen
+      - /ip4/0.0.0.0/tcp/9000
+      - --rpc
+      - 0.0.0.0:9370
+      - --files-addr
+      - 0.0.0.0:9371
+      - --agent-name
+      - connector-beta
+      - --identity-path
+      - /data/connector-beta.key
+      - --bootstrap
+      - /ip4/172.21.0.100/tcp/9000/p2p/${BOOTSTRAP_PEER:-12D3KooWDummyPlaceholder}
+    volumes:
+      - beta-data:/data
+    networks:
+      wws-tier1-net:
+        ipv4_address: 172.21.0.11
+    ports:
+      - "19372:9370"   # RPC
+      - "19383:9371"   # HTTP
+    depends_on:
+      bootstrap:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9371/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+
+  # -------------------------------------------------------------------------
+  # Tier2 — connector-raft (wws-tier2-net only)
+  # -------------------------------------------------------------------------
+  connector-raft:
+    image: wws-connector:latest
+    container_name: wws-connector-raft
+    restart: unless-stopped
+    environment:
+      BOOTSTRAP_PEER: ${BOOTSTRAP_PEER:-12D3KooWDummyPlaceholder}
+    command:
+      - --listen
+      - /ip4/0.0.0.0/tcp/9000
+      - --rpc
+      - 0.0.0.0:9370
+      - --files-addr
+      - 0.0.0.0:9371
+      - --agent-name
+      - connector-raft
+      - --identity-path
+      - /data/connector-raft.key
+      - --bootstrap
+      - /ip4/172.22.0.100/tcp/9000/p2p/${BOOTSTRAP_PEER:-12D3KooWDummyPlaceholder}
+    volumes:
+      - raft-data:/data
+    networks:
+      wws-tier2-net:
+        ipv4_address: 172.22.0.10
+    ports:
+      - "19374:9370"   # RPC
+      - "19385:9371"   # HTTP
+    depends_on:
+      bootstrap:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9371/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+
+  # -------------------------------------------------------------------------
+  # Tier2 — connector-pbft (wws-tier2-net only)
+  # -------------------------------------------------------------------------
+  connector-pbft:
+    image: wws-connector:latest
+    container_name: wws-connector-pbft
+    restart: unless-stopped
+    environment:
+      BOOTSTRAP_PEER: ${BOOTSTRAP_PEER:-12D3KooWDummyPlaceholder}
+    command:
+      - --listen
+      - /ip4/0.0.0.0/tcp/9000
+      - --rpc
+      - 0.0.0.0:9370
+      - --files-addr
+      - 0.0.0.0:9371
+      - --agent-name
+      - connector-pbft
+      - --identity-path
+      - /data/connector-pbft.key
+      - --bootstrap
+      - /ip4/172.22.0.100/tcp/9000/p2p/${BOOTSTRAP_PEER:-12D3KooWDummyPlaceholder}
+    volumes:
+      - pbft-data:/data
+    networks:
+      wws-tier2-net:
+        ipv4_address: 172.22.0.11
+    ports:
+      - "19376:9370"   # RPC
+      - "19387:9371"   # HTTP
+    depends_on:
+      bootstrap:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9371/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+
+  # -------------------------------------------------------------------------
+  # Tier2 — connector-paxos (wws-tier2-net only)
+  # -------------------------------------------------------------------------
+  connector-paxos:
+    image: wws-connector:latest
+    container_name: wws-connector-paxos
+    restart: unless-stopped
+    environment:
+      BOOTSTRAP_PEER: ${BOOTSTRAP_PEER:-12D3KooWDummyPlaceholder}
+    command:
+      - --listen
+      - /ip4/0.0.0.0/tcp/9000
+      - --rpc
+      - 0.0.0.0:9370
+      - --files-addr
+      - 0.0.0.0:9371
+      - --agent-name
+      - connector-paxos
+      - --identity-path
+      - /data/connector-paxos.key
+      - --bootstrap
+      - /ip4/172.22.0.100/tcp/9000/p2p/${BOOTSTRAP_PEER:-12D3KooWDummyPlaceholder}
+    volumes:
+      - paxos-data:/data
+    networks:
+      wws-tier2-net:
+        ipv4_address: 172.22.0.12
+    ports:
+      - "19378:9370"   # RPC
+      - "19389:9371"   # HTTP
+    depends_on:
+      bootstrap:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9371/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+
+  # -------------------------------------------------------------------------
+  # Tier2 — connector-tendermint (wws-tier2-net only)
+  # -------------------------------------------------------------------------
+  connector-tendermint:
+    image: wws-connector:latest
+    container_name: wws-connector-tendermint
+    restart: unless-stopped
+    environment:
+      BOOTSTRAP_PEER: ${BOOTSTRAP_PEER:-12D3KooWDummyPlaceholder}
+    command:
+      - --listen
+      - /ip4/0.0.0.0/tcp/9000
+      - --rpc
+      - 0.0.0.0:9370
+      - --files-addr
+      - 0.0.0.0:9371
+      - --agent-name
+      - connector-tendermint
+      - --identity-path
+      - /data/connector-tendermint.key
+      - --bootstrap
+      - /ip4/172.22.0.100/tcp/9000/p2p/${BOOTSTRAP_PEER:-12D3KooWDummyPlaceholder}
+    volumes:
+      - tendermint-data:/data
+    networks:
+      wws-tier2-net:
+        ipv4_address: 172.22.0.13
+    ports:
+      - "19380:9370"   # RPC
+      - "19391:9371"   # HTTP
+    depends_on:
+      bootstrap:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9371/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+
+  # -------------------------------------------------------------------------
+  # Tier2 — connector-hashgraph (wws-tier2-net only)
+  # -------------------------------------------------------------------------
+  connector-hashgraph:
+    image: wws-connector:latest
+    container_name: wws-connector-hashgraph
+    restart: unless-stopped
+    environment:
+      BOOTSTRAP_PEER: ${BOOTSTRAP_PEER:-12D3KooWDummyPlaceholder}
+    command:
+      - --listen
+      - /ip4/0.0.0.0/tcp/9000
+      - --rpc
+      - 0.0.0.0:9370
+      - --files-addr
+      - 0.0.0.0:9371
+      - --agent-name
+      - connector-hashgraph
+      - --identity-path
+      - /data/connector-hashgraph.key
+      - --bootstrap
+      - /ip4/172.22.0.100/tcp/9000/p2p/${BOOTSTRAP_PEER:-12D3KooWDummyPlaceholder}
+    volumes:
+      - hashgraph-data:/data
+    networks:
+      wws-tier2-net:
+        ipv4_address: 172.22.0.14
+    ports:
+      - "19382:9370"   # RPC
+      - "19393:9371"   # HTTP
+    depends_on:
+      bootstrap:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9371/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+
+  # -------------------------------------------------------------------------
+  # Tier2 — connector-synth (wws-tier2-net only)
+  # -------------------------------------------------------------------------
+  connector-synth:
+    image: wws-connector:latest
+    container_name: wws-connector-synth
+    restart: unless-stopped
+    environment:
+      BOOTSTRAP_PEER: ${BOOTSTRAP_PEER:-12D3KooWDummyPlaceholder}
+    command:
+      - --listen
+      - /ip4/0.0.0.0/tcp/9000
+      - --rpc
+      - 0.0.0.0:9370
+      - --files-addr
+      - 0.0.0.0:9371
+      - --agent-name
+      - connector-synth
+      - --identity-path
+      - /data/connector-synth.key
+      - --bootstrap
+      - /ip4/172.22.0.100/tcp/9000/p2p/${BOOTSTRAP_PEER:-12D3KooWDummyPlaceholder}
+    volumes:
+      - synth-data:/data
+    networks:
+      wws-tier2-net:
+        ipv4_address: 172.22.0.15
+    ports:
+      - "19384:9370"   # RPC
+      - "19395:9371"   # HTTP
+    depends_on:
+      bootstrap:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:9371/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
