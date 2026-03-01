@@ -13,6 +13,7 @@ not a workaround).
 """
 import sys
 import json
+import os
 import socket
 import time
 import uuid
@@ -21,6 +22,13 @@ import hashlib
 RPC_PORT = int(sys.argv[1])
 AGENT_NAME = sys.argv[2]
 ALL_PORTS = list(range(9370, 9410, 2))  # 9370 9372 … 9408
+
+# ── Sub-holon formation constants ──────────────────────────────
+# Maximum recursion depth for nested holons. Prevents infinite spawning.
+MAX_HOLON_DEPTH = 3
+# Depth of the current agent in the holon hierarchy.
+# The root coordinator starts at depth 0; each nested sub-holon increments by 1.
+CURRENT_HOLON_DEPTH = int(os.environ.get("WWS_HOLON_DEPTH", "0"))
 
 
 # ──────────────────────────────────────────────
@@ -79,6 +87,75 @@ def make_artifact(task_id, agent_id, content_text):
         "size_bytes": len(content_text),
         "content": content_text,
     }
+
+
+# ──────────────────────────────────────────────
+#  Sub-holon formation (complexity-gated)
+# ──────────────────────────────────────────────
+
+def inject_sub_task(subtask, depth=0):
+    """
+    Inject a sub-task into the local connector for deeper holon processing.
+    Returns the new task_id, or None on failure.
+    """
+    sub_desc = subtask.get("description", "sub-task")
+    resp = rpc("swarm.inject_task", {
+        "description": sub_desc,
+        "tier_level": 1,
+        "metadata": {
+            "holon_depth": depth,
+            "parent_task": subtask.get("parent_task_id", ""),
+            "estimated_complexity": subtask.get("estimated_complexity", 0),
+        },
+    })
+    task_id = resp.get("result", {}).get("task_id")
+    return task_id
+
+
+def wait_for_sub_result(task_id, timeout_secs=300):
+    """
+    Poll until the sub-task task_id reaches Completed status.
+    Returns the artifact content, or an error string on timeout.
+    """
+    deadline = time.time() + timeout_secs
+    while time.time() < deadline:
+        t = rpc("swarm.get_task", {"task_id": task_id}).get("result", {}).get("task", {})
+        status = t.get("status", "Unknown")
+        if status == "Completed":
+            artifact = t.get("artifact") or {}
+            return artifact.get("content", f"(sub-result for {task_id[-8:]})")
+        log(f"  Sub-task {task_id[-12:]} status={status}, waiting...")
+        time.sleep(10)
+    return f"(timeout waiting for sub-task {task_id[-8:]})"
+
+
+def execute_subtask(subtask, current_depth=0):
+    """
+    Execute a subtask, spawning a sub-holon when complexity > 0.4 and
+    the maximum holon depth has not been reached.
+
+    Args:
+        subtask: dict with at least 'description' and 'estimated_complexity'.
+        current_depth: current nesting depth of the calling holon.
+
+    Returns:
+        str: result content (either from sub-holon or direct execution).
+    """
+    complexity = subtask.get("estimated_complexity", 0)
+    desc = subtask.get("description", "")
+
+    if complexity > 0.4 and current_depth < MAX_HOLON_DEPTH:
+        log(f"[depth={current_depth}] Complexity {complexity:.2f} > 0.4, spawning sub-holon")
+        sub_task_id = inject_sub_task(subtask, depth=current_depth + 1)
+        if sub_task_id:
+            log(f"[depth={current_depth}] Sub-holon task_id={sub_task_id[-16:]}")
+            return wait_for_sub_result(sub_task_id)
+        else:
+            log(f"[depth={current_depth}] Sub-holon injection failed, falling back to direct execution")
+
+    # Direct execution path (low complexity or max depth reached)
+    log(f"[depth={current_depth}] Executing directly: {desc[:60]}")
+    return execute_task(subtask.get("task_id", ""), subtask.get("agent_id", ""), desc)
 
 
 # ──────────────────────────────────────────────
