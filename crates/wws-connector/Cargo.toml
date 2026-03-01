@@ -27,6 +27,7 @@ toml = { workspace = true }
 dirs = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
+rand = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 ratatui = { workspace = true }
 crossterm = { workspace = true }

@@ -195,6 +195,9 @@ async fn process_request(
             handle_renew_name(request_id, &request.params, state).await
         }
         "swarm.my_names" => handle_my_names(request_id, state).await,
+        "swarm.verify_agent" => {
+            handle_verify_agent(request_id, &request.params, &state).await
+        }
         _ => SwarmResponse::error(
             request_id,
             -32601, // Method not found
@@ -1466,6 +1469,72 @@ async fn handle_get_status(
     )
 }
 
+/// Generate an obfuscated arithmetic challenge for anti-bot verification.
+/// Returns a VerificationChallenge that is NOT sent in full to the agent
+/// (expected_answer is kept server-side).
+fn generate_verification_challenge() -> VerificationChallenge {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+
+    let a: i64 = rng.gen_range(10..=89);
+    let b: i64 = rng.gen_range(10..=89);
+    let answer = a + b;
+
+    // Unique challenge code
+    let code = format!("wws_verify_{:016x}", rng.gen::<u64>());
+
+    // Plain question
+    let plain = format!("what is {} plus {}", a, b);
+
+    // Garble: random case, random symbol insertion, random intra-word spaces
+    let symbols: &[char] = &['^', '{', '}', '|', '~'];
+    let mut garbled = String::new();
+    for ch in plain.chars() {
+        if ch == ' ' {
+            let r = rng.gen_range(0u8..4);
+            match r {
+                0 => garbled.push(' '),
+                1 => {
+                    let s = symbols[rng.gen_range(0..symbols.len())];
+                    garbled.push(s);
+                    garbled.push(' ');
+                }
+                2 => {
+                    garbled.push(' ');
+                    let s = symbols[rng.gen_range(0..symbols.len())];
+                    garbled.push(s);
+                }
+                _ => {
+                    garbled.push(' ');
+                    let s = symbols[rng.gen_range(0..symbols.len())];
+                    garbled.push(s);
+                    garbled.push(' ');
+                }
+            }
+        } else if ch.is_alphabetic() {
+            if rng.gen_bool(0.25) {
+                garbled.push(' ');
+            }
+            if rng.gen_bool(0.5) {
+                garbled.extend(ch.to_uppercase());
+            } else {
+                garbled.extend(ch.to_lowercase());
+            }
+        } else {
+            garbled.push(ch);
+        }
+    }
+
+    let challenge_text = format!("VERIFY CODE: {}\nCHALLENGE: {}?", code, garbled.trim());
+
+    VerificationChallenge {
+        code,
+        challenge_text,
+        expected_answer: answer,
+        created_at: chrono::Utc::now(),
+    }
+}
+
 /// Handle `swarm.register_agent` - register an execution agent identity.
 async fn handle_register_agent(
     id: Option<String>,
@@ -1473,6 +1542,74 @@ async fn handle_register_agent(
     state: &Arc<RwLock<ConnectorState>>,
     network_handle: &wws_network::SwarmHandle,
 ) -> SwarmResponse {
+    // ── Anti-bot verification gate ───────────────────────────────────────────
+    // First call: generate challenge and return it without registering.
+    // Second call (after verify_agent): already verified, proceed normally.
+    {
+        let agent_id_str = params
+            .get("agent_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        if !agent_id_str.is_empty() {
+            // Clean up expired challenges (TTL = 300 seconds)
+            {
+                let mut state_w = state.write().await;
+                state_w.pending_verifications.retain(|_, ch| !ch.is_expired(300));
+                drop(state_w);
+            }
+
+            let state_r = state.read().await;
+            let already_verified = state_r.verified_agents.contains(&agent_id_str);
+            let has_pending = state_r.pending_verifications.contains_key(&agent_id_str);
+            drop(state_r);
+
+            if !already_verified {
+                if !has_pending {
+                    // First call from this agent — generate challenge
+                    let challenge = generate_verification_challenge();
+                    let code = challenge.code.clone();
+                    let text = challenge.challenge_text.clone();
+                    let mut state_w = state.write().await;
+                    state_w.pending_verifications.insert(agent_id_str.clone(), challenge);
+                    drop(state_w);
+
+                    tracing::info!("Verification challenge issued to agent {}", agent_id_str);
+
+                    return SwarmResponse::success(
+                        id,
+                        serde_json::json!({
+                            "verified": false,
+                            "challenge_required": true,
+                            "challenge": {
+                                "code": code,
+                                "text": text
+                            }
+                        }),
+                    );
+                } else {
+                    // Challenge already issued but verify_agent not called yet — re-send challenge
+                    let state_r = state.read().await;
+                    let ch = state_r.pending_verifications[&agent_id_str].clone();
+                    drop(state_r);
+                    return SwarmResponse::success(
+                        id,
+                        serde_json::json!({
+                            "verified": false,
+                            "challenge_required": true,
+                            "challenge": {
+                                "code": ch.code,
+                                "text": ch.challenge_text
+                            }
+                        }),
+                    );
+                }
+            }
+            // If already_verified, fall through to normal registration
+        }
+    }
+
     let requested_agent_id = match params.get("agent_id").and_then(|v| v.as_str()) {
         Some(v) if !v.trim().is_empty() => v.trim().to_string(),
         _ => {
@@ -1679,6 +1816,86 @@ async fn handle_register_agent(
             "agent_id": canonical_agent_id,
             "requested_agent_id": requested_agent_id,
             "known_agents": known_agents,
+        }),
+    )
+}
+
+/// Handle `swarm.verify_agent` - verify a pending anti-bot challenge.
+pub async fn handle_verify_agent(
+    id: Option<String>,
+    params: &serde_json::Value,
+    state: &Arc<RwLock<ConnectorState>>,
+) -> SwarmResponse {
+    let agent_id = params
+        .get("agent_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let code = params
+        .get("code")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // Accept answer as integer or string
+    let answer: i64 = if let Some(n) = params.get("answer").and_then(|v| v.as_i64()) {
+        n
+    } else if let Some(s) = params.get("answer").and_then(|v| v.as_str()) {
+        s.trim().parse().unwrap_or(i64::MIN)
+    } else {
+        i64::MIN
+    };
+
+    if agent_id.is_empty() || code.is_empty() {
+        return SwarmResponse::error(id, -32602, "missing agent_id or code".to_string());
+    }
+
+    let mut state_w = state.write().await;
+
+    let challenge = match state_w.pending_verifications.get(&agent_id) {
+        Some(c) => c.clone(),
+        None => {
+            let already_verified = state_w.verified_agents.contains(&agent_id);
+            drop(state_w);
+            if already_verified {
+                return SwarmResponse::success(
+                    id,
+                    serde_json::json!({ "verified": true, "agent_id": agent_id }),
+                );
+            }
+            return SwarmResponse::error(id, -32000, "no_pending_challenge".to_string());
+        }
+    };
+
+    if challenge.code != code {
+        drop(state_w);
+        return SwarmResponse::error(id, -32000, "invalid_code".to_string());
+    }
+
+    if challenge.expected_answer != answer {
+        tracing::warn!(
+            "Verification failed for {}: expected {}, got {}",
+            agent_id,
+            challenge.expected_answer,
+            answer
+        );
+        drop(state_w);
+        return SwarmResponse::error(id, -32000, "invalid_answer".to_string());
+    }
+
+    // Clean up and mark verified
+    state_w.pending_verifications.remove(&agent_id);
+    state_w.verified_agents.insert(agent_id.clone());
+    drop(state_w);
+
+    tracing::info!("Agent {} passed verification", agent_id);
+
+    SwarmResponse::success(
+        id,
+        serde_json::json!({
+            "verified": true,
+            "agent_id": agent_id,
+            "message": "Verification successful. Call swarm.register_agent again to complete registration."
         }),
     )
 }
