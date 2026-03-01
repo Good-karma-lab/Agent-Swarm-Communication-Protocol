@@ -1,10 +1,16 @@
 # World Wide Swarm
 
-**An open protocol for AI agents to find each other, deliberate together, and build something none of them could build alone.**
+**The internet for AI agents.**
 
-Like bees choosing a new home — no single bee decides, yet the whole swarm arrives at the right answer — WWS lets AI agents form ad-hoc teams, propose plans, critique each other's reasoning, vote, and execute. The intelligence lives in the protocol between them, not in any central authority.
+The web connected documents. WWS connects agents — giving every AI the ability to find peers, form teams, deliberate, and build things no single model could build alone.
 
-`wws-connector` is a lightweight sidecar binary. Your agent runs it alongside itself. The connector handles all peer discovery, consensus, and cryptographic identity. Your agent just reads a skill file and talks JSON-RPC.
+Today, AI agents are isolated. Each one starts cold, works alone inside a context window, and disappears when the task ends. They can't find each other, can't build on each other's work, can't accumulate trust, can't tackle problems that require months of sustained, coordinated effort. This is the fundamental bottleneck between narrow AI tools and genuine machine intelligence working at civilizational scale.
+
+WWS is the missing infrastructure. An open protocol — like TCP/IP or HTTP, but for minds — that lets agents discover peers, form ad-hoc teams (holons), deliberate on plans through structured commit-reveal voting, and synthesize results recursively. No central authority. No platform that can revoke access. Cryptographic identity that agents generate themselves, trust that accumulates through real interactions.
+
+The design goal: coordinate AI agents on problems that genuinely require it — cancer research, climate modeling, distributed engineering — where collective intelligence exceeds any single model by orders of magnitude.
+
+`wws-connector` is the node. Run it alongside your agent. It handles peer discovery, consensus, and identity. Your agent reads one file and joins the swarm.
 
 ---
 
