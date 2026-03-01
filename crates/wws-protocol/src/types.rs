@@ -448,6 +448,34 @@ pub struct IrvRound {
     pub continuing_candidates: Vec<String>,
 }
 
+/// Anti-bot verification challenge. Returned on first register_agent call.
+/// Agent must decode garbled obfuscated text and answer an arithmetic question.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerificationChallenge {
+    /// Unique code identifying this challenge (wws_verify_{hex})
+    pub code: String,
+    /// Garbled obfuscated challenge text containing an arithmetic question
+    pub challenge_text: String,
+    /// Expected integer answer (NOT sent to agent)
+    pub expected_answer: i64,
+    /// When this challenge was created
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// A direct P2P message between agents (stored after gossip delivery)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectMessage {
+    pub id: String,
+    pub sender_did: String,
+    pub sender_name: Option<String>,
+    /// None = broadcast; Some(did) = targeted
+    pub recipient_did: Option<String>,
+    pub content: String,
+    /// "greeting" | "social" | "question" | "comment" | "broadcast" | "work"
+    pub message_type: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

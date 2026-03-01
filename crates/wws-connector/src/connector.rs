@@ -197,6 +197,13 @@ pub struct ConnectorState {
     /// In-memory wws:// name registry: lowercase name -> NameRecord.
     /// DHT-backed persistence is a future enhancement.
     pub registered_names: std::collections::HashMap<String, wws_network::name_registry::NameRecord>,
+
+    // Anti-bot verification
+    pub pending_verifications: std::collections::HashMap<String, VerificationChallenge>,
+    pub verified_agents: std::collections::HashSet<String>,
+
+    // Direct P2P messages
+    pub direct_messages: Vec<DirectMessage>,
 }
 
 impl ConnectorState {
@@ -488,6 +495,9 @@ impl WwsConnector {
             irv_rounds: std::collections::HashMap::new(),
             board_acceptances: std::collections::HashMap::new(),
             registered_names: std::collections::HashMap::new(),
+            pending_verifications: std::collections::HashMap::new(),
+            verified_agents: std::collections::HashSet::new(),
+            direct_messages: Vec::new(),
         };
 
         Ok(Self {
@@ -826,9 +836,19 @@ impl WwsConnector {
                     }
 
                     state.task_set.add(params.task.task_id.clone());
+                    let injected_id = params.task.task_id.clone();
+                    let injected_parent_id = params.task.parent_task_id.clone();
                     state
                         .task_details
-                        .insert(params.task.task_id.clone(), params.task.clone());
+                        .insert(injected_id.clone(), params.task.clone());
+                    // Update parent's subtasks list when a sub-holon task arrives
+                    if let Some(parent_id) = &injected_parent_id {
+                        if let Some(parent) = state.task_details.get_mut(parent_id) {
+                            if !parent.subtasks.iter().any(|id| id == &injected_id) {
+                                parent.subtasks.push(injected_id.clone());
+                            }
+                        }
+                    }
                     state.push_task_timeline_event(
                         &params.task.task_id,
                         "injected",
@@ -1002,7 +1022,9 @@ impl WwsConnector {
                         return;
                     }
                     if let Some(task) = state.task_details.get_mut(&params.task_id) {
-                        task.status = TaskStatus::ProposalPhase;
+                        if matches!(task.status, TaskStatus::Pending | TaskStatus::ProposalPhase) {
+                            task.status = TaskStatus::ProposalPhase;
+                        }
                     }
 
                     let requirement = Self::expected_vote_requirement_for_task(&state, &params.task_id);
@@ -1369,22 +1391,16 @@ impl WwsConnector {
                 {
                     let mut state = self.state.write().await;
                     if let Some(task) = state.task_details.get(&params.task_id) {
-                        if task.assigned_to.as_ref() != Some(&params.agent_id) {
+                        // Only reject if explicitly assigned to a different agent.
+                        // If assigned_to is None (coordinator/synthesis tasks), allow through.
+                        if task.assigned_to.is_some()
+                            && task.assigned_to.as_ref() != Some(&params.agent_id)
+                        {
                             state.push_log(
                                 LogCategory::Task,
                                 format!(
                                     "Ignoring late result for task {} from replaced assignee {}",
                                     params.task_id, params.agent_id
-                                ),
-                            );
-                            return;
-                        }
-                        if task.parent_task_id.is_none() && task.subtasks.is_empty() {
-                            state.push_log(
-                                LogCategory::Task,
-                                format!(
-                                    "Rejected direct root result for task {} (no subtasks)",
-                                    params.task_id
                                 ),
                             );
                             return;
@@ -1402,21 +1418,39 @@ impl WwsConnector {
                     if let Some(holon) = state.active_holons.get_mut(&params.task_id) {
                         holon.status = HolonStatus::Done;
                     }
-                    // Record synthesis result as deliberation message
-                    if let Some(text) = state.task_result_text.get(&params.task_id).cloned() {
-                        if !text.is_empty() {
-                            state.deliberation_messages.entry(params.task_id.clone()).or_default().push(DeliberationMessage {
-                                id: uuid::Uuid::new_v4().to_string(),
-                                task_id: params.task_id.clone(),
-                                timestamp: chrono::Utc::now(),
-                                speaker: params.agent_id.clone(),
-                                round: 3,
-                                message_type: DeliberationType::SynthesisResult,
-                                content: text,
-                                referenced_plan_id: None,
-                                critic_scores: None,
-                            });
-                        }
+                    // Store the artifact in task_results so /api/tasks returns result_artifact
+                    state.task_results.insert(params.task_id.clone(), params.artifact.clone());
+
+                    // Store content text for API and synthesis messages
+                    let content_text = if !params.artifact.content.is_empty() {
+                        params.artifact.content.clone()
+                    } else if let Some(c) = raw_params.get("content").and_then(|v| v.as_str()) {
+                        c.to_string()
+                    } else {
+                        String::new()
+                    };
+                    if !content_text.is_empty() {
+                        state.task_result_text.insert(params.task_id.clone(), content_text.clone());
+                    }
+
+                    // Record synthesis result as deliberation message if this is a synthesis
+                    let synth_text = if !content_text.is_empty() {
+                        content_text.clone()
+                    } else {
+                        state.task_result_text.get(&params.task_id).cloned().unwrap_or_default()
+                    };
+                    if params.is_synthesis && !synth_text.is_empty() {
+                        state.deliberation_messages.entry(params.task_id.clone()).or_default().push(DeliberationMessage {
+                            id: uuid::Uuid::new_v4().to_string(),
+                            task_id: params.task_id.clone(),
+                            timestamp: chrono::Utc::now(),
+                            speaker: params.agent_id.clone(),
+                            round: 3,
+                            message_type: DeliberationType::SynthesisResult,
+                            content: synth_text,
+                            referenced_plan_id: None,
+                            critic_scores: None,
+                        });
                     }
                     // Store the artifact content CID as leaf content bytes in the DAG.
                     state.merkle_dag.add_leaf(
@@ -1447,13 +1481,6 @@ impl WwsConnector {
                             params.task_id, params.agent_id, params.artifact.artifact_id
                         ),
                     );
-                    if let Some(content) = raw_params.get("content").and_then(|v| v.as_str()) {
-                        if !content.trim().is_empty() {
-                            state
-                                .task_result_text
-                                .insert(params.task_id.clone(), content.to_string());
-                        }
-                    }
                 }
             }
             Some(ProtocolMethod::Succession) => {
