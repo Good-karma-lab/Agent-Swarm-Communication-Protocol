@@ -68,7 +68,7 @@ export default function App() {
 
   // SSE event stream
   useEffect(() => {
-    const es = new EventSource('/api/stream')
+    const es = new EventSource('/api/events')
     es.onmessage = (e) => {
       try {
         const ev = JSON.parse(e.data)

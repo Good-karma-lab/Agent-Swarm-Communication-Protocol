@@ -5,12 +5,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path as AxumPath, State};
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::extract::{Path as AxumPath, Query, State};
+use axum::http::{header, HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{delete, get, put};
 use axum::{Json, Router};
+use bytes::Bytes;
+use futures_util::stream;
 use serde::Deserialize;
 use tokio::sync::RwLock;
 use tower_http::services::{ServeDir, ServeFile};
@@ -78,6 +81,18 @@ impl FileServer {
             .route("/agent-onboarding.json", get(onboarding))
             .route("/api/health", get(api_health))
             .route("/api/auth-status", get(api_auth_status))
+            .route("/api/identity", get(api_identity))
+            .route("/api/reputation", get(api_reputation))
+            .route("/api/reputation/events", get(api_reputation_events))
+            .route("/api/names", get(api_names).post(api_names_register))
+            .route("/api/names/:name/renew", put(api_names_renew))
+            .route("/api/names/:name", delete(api_names_release))
+            .route("/api/network", get(api_network))
+            .route("/api/peers", get(api_peers))
+            .route("/api/directory", get(api_directory))
+            .route("/api/keys", get(api_keys))
+            .route("/api/graph", get(api_graph))
+            .route("/api/events", get(api_events))
             .route("/api/hierarchy", get(api_hierarchy))
             .route("/api/voting", get(api_voting))
             .route("/api/voting/:task_id", get(api_voting_task))
@@ -955,4 +970,364 @@ async fn api_task_irv_rounds(
         })).collect())
         .unwrap_or_default();
     Json(serde_json::json!({ "task_id": task_id, "irv_rounds": rounds }))
+}
+
+// ── WWS Identity / Reputation / Names / Network / Directory / Keys ──────────
+
+async fn api_identity(State(web): State<WebState>) -> Json<serde_json::Value> {
+    let s = web.state.read().await;
+    let did = s.agent_id.to_string();
+    let wws_name = s.registered_names.values()
+        .find(|r| r.did == did)
+        .map(|r| r.name.clone());
+    let uptime_secs = chrono::Utc::now()
+        .signed_duration_since(s.start_time)
+        .num_seconds()
+        .max(0);
+    Json(serde_json::json!({
+        "did": did,
+        "peer_id": did.split(':').next_back().unwrap_or("").chars().take(20).collect::<String>(),
+        "wws_name": wws_name,
+        "tier": format!("{:?}", s.my_tier).to_lowercase(),
+        "key_healthy": true,
+        "uptime_secs": uptime_secs,
+    }))
+}
+
+async fn api_reputation(State(web): State<WebState>) -> Json<serde_json::Value> {
+    let s = web.state.read().await;
+    let my_id = s.agent_id.to_string();
+    let activity = s.agent_activity.get(&my_id);
+    let tasks_done = activity.map(|a| a.tasks_processed_count).unwrap_or(0);
+    let score = 10u64 + tasks_done * 5;
+    let rep_tier = rep_tier_for_score(score);
+    Json(serde_json::json!({
+        "score": score,
+        "tier": rep_tier,
+        "next_tier_at": rep_next_threshold(score),
+        "positive_total": tasks_done,
+        "negative_total": 0,
+        "decay": 0.0,
+    }))
+}
+
+async fn api_reputation_events(State(web): State<WebState>) -> Json<serde_json::Value> {
+    let s = web.state.read().await;
+    let my_id = s.agent_id.to_string();
+    let events: Vec<serde_json::Value> = s.event_log.iter().rev()
+        .filter(|e| e.message.contains("task") || e.message.contains("AUDIT"))
+        .take(50)
+        .map(|e| serde_json::json!({
+            "timestamp": e.timestamp,
+            "kind": "task_event",
+            "delta": 5,
+            "description": e.message.replace(&my_id, "[self]"),
+        }))
+        .collect();
+    Json(serde_json::json!({ "events": events }))
+}
+
+async fn api_names(State(web): State<WebState>) -> Json<serde_json::Value> {
+    let s = web.state.read().await;
+    let did = s.agent_id.to_string();
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let names: Vec<serde_json::Value> = s.registered_names.values()
+        .filter(|r| r.did == did)
+        .map(|r| serde_json::json!({
+            "name": r.name,
+            "did": r.did,
+            "registered_at": r.registered_at,
+            "expires_at": r.expires_at,
+            "ttl_secs": (r.expires_at as i64 - now_unix as i64).max(0),
+        }))
+        .collect();
+    Json(serde_json::json!({ "names": names }))
+}
+
+#[derive(Deserialize)]
+struct NameRegisterBody { name: String }
+
+async fn api_names_register(
+    State(web): State<WebState>,
+    Json(body): Json<NameRegisterBody>,
+) -> impl IntoResponse {
+    let name = body.name.to_lowercase();
+    if name.trim().is_empty() || name.contains(' ') {
+        return (StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "invalid_name"}))).into_response();
+    }
+    let mut s = web.state.write().await;
+    let did = s.agent_id.to_string();
+    if s.registered_names.contains_key(&name) {
+        return (StatusCode::CONFLICT,
+            Json(serde_json::json!({"ok": false, "error": "name_taken"}))).into_response();
+    }
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let record = wws_network::name_registry::NameRecord {
+        name: name.clone(),
+        did,
+        peer_id: String::new(),
+        registered_at: now_unix,
+        expires_at: now_unix + 365 * 24 * 3600,
+        pow_nonce: 0,
+        signature: vec![],
+    };
+    s.registered_names.insert(name, record);
+    (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response()
+}
+
+async fn api_names_renew(
+    State(web): State<WebState>,
+    AxumPath(name): AxumPath<String>,
+) -> impl IntoResponse {
+    let mut s = web.state.write().await;
+    let did = s.agent_id.to_string();
+    if let Some(rec) = s.registered_names.get_mut(&name) {
+        if rec.did != did {
+            return (StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"ok": false, "error": "not_owner"}))).into_response();
+        }
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        rec.expires_at = now_unix + 365 * 24 * 3600;
+        (StatusCode::OK, Json(serde_json::json!({"ok": true, "expires_at": rec.expires_at}))).into_response()
+    } else {
+        (StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"ok": false, "error": "not_found"}))).into_response()
+    }
+}
+
+async fn api_names_release(
+    State(web): State<WebState>,
+    AxumPath(name): AxumPath<String>,
+) -> impl IntoResponse {
+    let mut s = web.state.write().await;
+    let did = s.agent_id.to_string();
+    match s.registered_names.get(&name) {
+        Some(rec) if rec.did != did =>
+            return (StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"ok": false, "error": "not_owner"}))).into_response(),
+        None =>
+            return (StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"ok": false, "error": "not_found"}))).into_response(),
+        _ => {}
+    }
+    s.registered_names.remove(&name);
+    (StatusCode::OK, Json(serde_json::json!({"ok": true}))).into_response()
+}
+
+async fn api_network(State(web): State<WebState>) -> Json<serde_json::Value> {
+    let s = web.state.read().await;
+    let peer_count = s.member_last_seen.len();
+    let swarm_size = s.agent_set.len().max(peer_count);
+    let bootstrap_connected = peer_count > 0;
+    Json(serde_json::json!({
+        "bootstrap_connected": bootstrap_connected,
+        "peer_count": peer_count,
+        "swarm_size_estimate": swarm_size,
+        "nat_type": "unknown",
+        "current_epoch": s.network_stats.current_epoch,
+    }))
+}
+
+async fn api_peers(State(web): State<WebState>) -> Json<serde_json::Value> {
+    let s = web.state.read().await;
+    let now = chrono::Utc::now();
+    let peers: Vec<serde_json::Value> = s.member_last_seen.iter()
+        .map(|(id, ts)| {
+            let seen_secs = now.signed_duration_since(*ts).num_seconds().max(0);
+            serde_json::json!({
+                "did": id,
+                "name": s.agent_names.get(id).cloned().unwrap_or_else(|| short_agent_label(id)),
+                "tier": format!("{:?}", s.agent_tiers.get(id).copied().unwrap_or(Tier::Executor)).to_lowercase(),
+                "seen_secs": seen_secs,
+                "online": seen_secs <= 60,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "peers": peers }))
+}
+
+#[derive(Deserialize, Default)]
+struct DirectoryQuery {
+    q: Option<String>,
+    tier: Option<String>,
+    sort: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+}
+
+async fn api_directory(
+    State(web): State<WebState>,
+    Query(params): Query<DirectoryQuery>,
+) -> Json<serde_json::Value> {
+    let s = web.state.read().await;
+    let now = chrono::Utc::now();
+    let members = collect_known_members(&s);
+    let my_id = s.agent_id.to_string();
+
+    let q_lower = params.q.as_ref().map(|q| q.to_lowercase());
+    let tier_filter = params.tier.as_ref().map(|t| t.to_lowercase());
+
+    let mut agents: Vec<serde_json::Value> = members.into_iter()
+        .map(|id| {
+            let name = s.agent_names.get(&id).cloned().unwrap_or_else(|| short_agent_label(&id));
+            let tier = format!("{:?}", s.agent_tiers.get(&id).copied().unwrap_or(Tier::Executor)).to_lowercase();
+            let seen_secs = s.member_last_seen.get(&id)
+                .map(|ts| now.signed_duration_since(*ts).num_seconds().max(0));
+            let online = seen_secs.map(|v| v <= 60).unwrap_or(id == my_id);
+            let activity = s.agent_activity.get(&id);
+            let tasks_done = activity.map(|a| a.tasks_processed_count).unwrap_or(0);
+            let score = 10u64 + tasks_done * 5;
+            serde_json::json!({
+                "did": id,
+                "name": name,
+                "tier": tier,
+                "score": score,
+                "online": online,
+                "task_count": tasks_done,
+                "is_self": id == my_id,
+            })
+        })
+        .filter(|a| {
+            let name = a["name"].as_str().unwrap_or("").to_lowercase();
+            let did = a["did"].as_str().unwrap_or("").to_lowercase();
+            let tier = a["tier"].as_str().unwrap_or("").to_lowercase();
+            let q_ok = q_lower.as_ref().map(|q| name.contains(q.as_str()) || did.contains(q.as_str())).unwrap_or(true);
+            let tier_ok = tier_filter.as_ref().map(|t| tier.contains(t.as_str())).unwrap_or(true);
+            q_ok && tier_ok
+        })
+        .collect();
+
+    let sort = params.sort.as_deref().unwrap_or("reputation");
+    if sort == "reputation" {
+        agents.sort_by(|a, b| b["score"].as_u64().unwrap_or(0).cmp(&a["score"].as_u64().unwrap_or(0)));
+    } else {
+        agents.sort_by(|a, b| a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or("")));
+    }
+
+    let total = agents.len();
+    let offset = params.offset.unwrap_or(0);
+    let limit = params.limit.unwrap_or(100);
+    let page: Vec<_> = agents.into_iter().skip(offset).take(limit).collect();
+
+    Json(serde_json::json!({ "agents": page, "total": total }))
+}
+
+async fn api_keys(State(web): State<WebState>) -> Json<serde_json::Value> {
+    let s = web.state.read().await;
+    let did = s.agent_id.to_string();
+    let pubkey_hex = did.split(':').next_back().unwrap_or("").to_string();
+    Json(serde_json::json!({
+        "did": did,
+        "pubkey_hex": pubkey_hex,
+        "key_type": "Ed25519",
+        "guardian_count": 0,
+        "threshold": 1,
+        "last_rotation": s.start_time,
+    }))
+}
+
+async fn api_graph(State(web): State<WebState>) -> Json<serde_json::Value> {
+    let s = web.state.read().await;
+    let members = collect_known_members(&s);
+    let my_id = s.agent_id.to_string();
+    let now = chrono::Utc::now();
+
+    let nodes: Vec<serde_json::Value> = members.iter().map(|id| {
+        let name = s.agent_names.get(id).cloned().unwrap_or_else(|| short_agent_label(id));
+        let tier = format!("{:?}", s.agent_tiers.get(id).copied().unwrap_or(Tier::Executor)).to_lowercase();
+        let wws_name = s.registered_names.values().find(|r| &r.did == id).map(|r| r.name.clone());
+        let seen_secs = s.member_last_seen.get(id)
+            .map(|ts| now.signed_duration_since(*ts).num_seconds().max(0));
+        let status = if *id == my_id {
+            "healthy"
+        } else if seen_secs.map(|v| v <= 60).unwrap_or(false) {
+            "healthy"
+        } else {
+            "unknown"
+        };
+        serde_json::json!({
+            "id": id,
+            "did": id,
+            "name": name,
+            "wws_name": wws_name,
+            "tier": tier,
+            "type": "agent",
+            "status": status,
+            "is_self": *id == my_id,
+        })
+    }).collect();
+
+    let mut edges: Vec<serde_json::Value> = s.agent_parents.iter()
+        .map(|(child, parent)| serde_json::json!({"from": parent, "to": child}))
+        .collect();
+
+    for peer in s.agent_set.elements() {
+        let peer_did = format!("did:swarm:{}", peer);
+        edges.push(serde_json::json!({"from": my_id, "to": peer_did}));
+    }
+
+    Json(serde_json::json!({"nodes": nodes, "edges": edges}))
+}
+
+/// Server-Sent Events stream — replaces WebSocket for browser EventSource compatibility.
+async fn api_events(State(web): State<WebState>) -> Response {
+    let state = web.state.clone();
+    let sse_stream = stream::unfold((state, false), |(state, skip_first_sleep)| async move {
+        if skip_first_sleep {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+        let payload = {
+            let s = state.read().await;
+            let recent_messages = s.message_trace.iter().rev().take(20).cloned().collect::<Vec<_>>();
+            let recent_events = s.event_log.iter().rev().take(20).cloned().collect::<Vec<_>>();
+            serde_json::json!({
+                "type": "snapshot",
+                "time": chrono::Utc::now(),
+                "active_tasks": s.task_set.len(),
+                "known_agents": s.active_member_count(Duration::from_secs(ACTIVE_MEMBER_STALENESS_SECS)),
+                "messages": recent_messages,
+                "events": recent_events,
+            })
+        };
+        let text = format!("data: {}\n\n", payload);
+        Some((Ok::<Bytes, std::convert::Infallible>(Bytes::from(text)), (state, true)))
+    });
+
+    Response::builder()
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .header("x-accel-buffering", "no")
+        .body(Body::from_stream(sse_stream))
+        .unwrap()
+}
+
+fn rep_tier_for_score(score: u64) -> &'static str {
+    match score {
+        0..=14  => "newcomer",
+        15..=49 => "member",
+        50..=99 => "trusted",
+        100..=199 => "established",
+        200..=499 => "veteran",
+        _ => "legend",
+    }
+}
+
+fn rep_next_threshold(score: u64) -> u64 {
+    match score {
+        0..=14  => 15,
+        15..=49 => 50,
+        50..=99 => 100,
+        100..=199 => 200,
+        _ => 500,
+    }
 }
