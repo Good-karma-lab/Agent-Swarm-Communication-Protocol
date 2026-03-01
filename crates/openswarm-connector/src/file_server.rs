@@ -15,7 +15,7 @@ use axum::{Json, Router};
 use futures_util::stream::Stream;
 use serde::Deserialize;
 use tokio::sync::RwLock;
-use tower_http::services::{ServeDir, ServeFile};
+use tower_http::services::ServeDir;
 
 use openswarm_protocol::Tier;
 
@@ -39,6 +39,7 @@ static DOCS: EmbeddedDocs = EmbeddedDocs {
 struct WebState {
     state: Arc<RwLock<ConnectorState>>,
     network_handle: openswarm_network::SwarmHandle,
+    web_root: PathBuf,
 }
 
 pub struct FileServer {
@@ -63,15 +64,19 @@ impl FileServer {
     }
 
     pub async fn run(self) -> Result<(), anyhow::Error> {
+        let web_root = self.web_root.clone();
+
         let web_state = WebState {
             state: self.state,
             network_handle: self.network_handle,
+            web_root: web_root.clone(),
         };
 
-        let web_root = self.web_root.clone();
-        let index_file = web_root.join("index.html");
-        let static_service = ServeDir::new(web_root)
-            .not_found_service(ServeFile::new(index_file));
+        // Serve static assets from /assets/* directly; everything else falls
+        // through to the SPA index handler which returns index.html with 200.
+        // Using axum's .fallback() avoids the tower-http ServeDir bug where
+        // not_found_service serves the file but still sets status 404.
+        let assets_service = ServeDir::new(web_root.join("assets"));
 
         let app = Router::new()
             .route("/SKILL.md", get(skill_md))
@@ -105,7 +110,8 @@ impl FileServer {
             .route("/api/names", get(api_names))
             .route("/api/keys", get(api_keys))
             .route("/api/events", get(api_events))
-            .fallback_service(static_service)
+            .nest_service("/assets", assets_service)
+            .fallback(spa_index)
             .with_state(web_state);
 
         let listener = tokio::net::TcpListener::bind(&self.bind_addr).await?;
@@ -143,6 +149,21 @@ fn detect_web_root() -> PathBuf {
     }
 
     cwd
+}
+
+/// SPA fallback: serve index.html with 200 for any unmatched path.
+/// This enables client-side routing without browser 404 errors.
+async fn spa_index(State(web): State<WebState>) -> impl IntoResponse {
+    let index = web.web_root.join("index.html");
+    match tokio::fs::read(&index).await {
+        Ok(bytes) => (
+            StatusCode::OK,
+            [("content-type", "text/html; charset=utf-8")],
+            bytes,
+        )
+            .into_response(),
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 async fn skill_md() -> impl IntoResponse {
@@ -903,7 +924,7 @@ async fn api_holon_detail(
             "status": format!("{:?}", h.status),
             "created_at": h.created_at,
         })).into_response(),
-        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "holon not found"}))).into_response(),
+        None => Json(serde_json::json!({"task_id": task_id, "members": [], "status": "none"})).into_response(),
     }
 }
 
