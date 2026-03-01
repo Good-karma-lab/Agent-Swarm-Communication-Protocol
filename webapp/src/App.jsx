@@ -113,6 +113,7 @@ export default function App() {
         onViewChange={setView}
         onAudit={() => openPanel('audit')}
         onSettings={() => openPanel('keyMgmt')}
+        onSubmitTask={() => setShowSubmit(true)}
       />
       <div className="app-body">
         <LeftColumn

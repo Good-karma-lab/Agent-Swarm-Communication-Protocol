@@ -5,7 +5,7 @@ const TIER_LABELS = {
   established: 'Established', veteran: 'Veteran', suspended: 'Suspended'
 }
 
-export default function Header({ identity, network, view, onViewChange, onAudit, onSettings }) {
+export default function Header({ identity, network, view, onViewChange, onAudit, onSettings, onSubmitTask }) {
   const name  = identity?.wws_name  || '—'
   const tier  = identity?.tier       || 'newcomer'
   const agents = network?.swarm_size_estimate ?? '—'
@@ -23,7 +23,8 @@ export default function Header({ identity, network, view, onViewChange, onAudit,
           <span>⬡ {peers} peers</span>
         </div>
         <div className="header-spacer" />
-        <button className="btn" onClick={onAudit}>Audit</button>
+        <button className="btn btn-primary" onClick={onSubmitTask}>Submit Task</button>
+        <button className="btn" style={{marginLeft:6}} onClick={onAudit}>Audit</button>
         <button className="btn" style={{marginLeft:6}} onClick={onSettings}>⚙</button>
       </div>
       <div className="header-row2">
