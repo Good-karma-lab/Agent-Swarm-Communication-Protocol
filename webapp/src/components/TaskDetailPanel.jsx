@@ -47,11 +47,13 @@ function IrvRounds({ rounds }) {
 }
 
 // ── Voting tab ────────────────────────────
-function VotingTab({ taskVoting, taskBallots }) {
+function VotingTab({ taskVoting, taskBallots, agents }) {
   const rfp = taskVoting?.rfp?.[0]
   const ballots = taskBallots?.ballots || []
   const irvRounds = taskBallots?.irv_rounds || []
   const planIds = (rfp?.plans || []).map(p => p.plan_id)
+  const agentsList = agents?.agents || []
+  const resolveVoter = id => agentsList.find(a => a.agent_id === id)?.name || scrubId(id)
 
   if (!rfp) return <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>No voting data for this task.</div>
 
@@ -96,7 +98,7 @@ function VotingTab({ taskVoting, taskBallots }) {
           {ballots.map((b, i) => (
             <div key={i} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', marginBottom: 8 }}>
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--teal)', marginBottom: 6 }}>
-                {scrubId(b.voter)}
+                {resolveVoter(b.voter)}
               </div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, fontFamily: 'var(--font-mono)' }}>
                 Rankings: {(b.rankings || []).map(r => r.slice(0, 6)).join(' › ')}
@@ -428,7 +430,7 @@ export default function TaskDetailPanel({ taskId, taskTrace, taskVoting, taskBal
         <OverviewTab taskTrace={taskTrace} />
       )}
       {activeTab === 'voting' && (
-        <VotingTab taskVoting={taskVoting} taskBallots={taskBallots} />
+        <VotingTab taskVoting={taskVoting} taskBallots={taskBallots} agents={agents} />
       )}
       {activeTab === 'deliberation' && (
         <DeliberationTab taskId={taskId} agents={agents} />

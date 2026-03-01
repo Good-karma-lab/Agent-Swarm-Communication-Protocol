@@ -1661,6 +1661,12 @@ impl OpenSwarmConnector {
                             params.content.clone(),
                         );
                     }
+                    // Update BallotRecord for this voter with their critic_scores (P2P path)
+                    if let Some(ballots) = state.ballot_records.get_mut(&params.task_id) {
+                        if let Some(ballot) = ballots.iter_mut().find(|b| b.voter == params.voter_id) {
+                            ballot.critic_scores = params.plan_scores.clone();
+                        }
+                    }
                     // Update holon status to Voting after critique
                     if let Some(holon) = state.active_holons.get_mut(&params.task_id) {
                         if matches!(holon.status, HolonStatus::Deliberating) {
