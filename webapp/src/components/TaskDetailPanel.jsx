@@ -138,11 +138,13 @@ const TYPE_ICON = {
   SynthesisResult:    '🔗',
 }
 
-function DelibMsg({ msg, adversarialId }) {
+function DelibMsg({ msg, adversarialId, agents }) {
   const [expanded, setExpanded] = useState(false)
   const color = TYPE_COLOR[msg.message_type] || '#4a7a9b'
   const icon = TYPE_ICON[msg.message_type] || '💬'
   const isAdversarial = adversarialId && msg.speaker === adversarialId
+  const agentsList = agents?.agents || []
+  const speakerName = agentsList.find(a => a.agent_id === msg.speaker)?.name || scrubId(msg.speaker)
 
   return (
     <div className="deliberation-msg" style={{ borderLeftColor: color, background: 'var(--surface-2)' }}>
@@ -150,7 +152,7 @@ function DelibMsg({ msg, adversarialId }) {
         <div className="deliberation-msg-meta">
           <span>{icon}</span>
           {isAdversarial && <span title="Adversarial critic">⚔️</span>}
-          <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--teal)', fontSize: 11 }}>{scrubId(msg.speaker)}</span>
+          <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--teal)', fontSize: 11 }}>{speakerName}</span>
           <span className="badge" style={{ background: `${color}22`, color, border: `1px solid ${color}44`, fontSize: 10 }}>
             {msg.message_type} R{msg.round}
           </span>
@@ -190,7 +192,7 @@ function DelibMsg({ msg, adversarialId }) {
   )
 }
 
-function DeliberationTab({ taskId }) {
+function DeliberationTab({ taskId, agents }) {
   const [msgs, setMsgs] = useState([])
   const [holonInfo, setHolonInfo] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -223,7 +225,7 @@ function DeliberationTab({ taskId }) {
         </div>
       )}
       {msgs.map(msg => (
-        <DelibMsg key={msg.id} msg={msg} adversarialId={holonInfo?.adversarial_critic} />
+        <DelibMsg key={msg.id} msg={msg} adversarialId={holonInfo?.adversarial_critic} agents={agents} />
       ))}
     </div>
   )
@@ -399,7 +401,7 @@ function OverviewTab({ taskTrace }) {
 }
 
 // ── Main export ───────────────────────────
-export default function TaskDetailPanel({ taskId, taskTrace, taskVoting, taskBallots }) {
+export default function TaskDetailPanel({ taskId, taskTrace, taskVoting, taskBallots, agents }) {
   const [activeTab, setActiveTab] = useState('overview')
 
   return (
@@ -429,7 +431,7 @@ export default function TaskDetailPanel({ taskId, taskTrace, taskVoting, taskBal
         <VotingTab taskVoting={taskVoting} taskBallots={taskBallots} />
       )}
       {activeTab === 'deliberation' && (
-        <DeliberationTab taskId={taskId} />
+        <DeliberationTab taskId={taskId} agents={agents} />
       )}
     </div>
   )

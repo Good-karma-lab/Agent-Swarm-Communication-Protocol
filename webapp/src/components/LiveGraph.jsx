@@ -51,13 +51,14 @@ export default function LiveGraph({ topology, holons, agents, onNodeClick }) {
       // Topology edges
       ;(topology?.edges || []).forEach((e, i) => {
         const isHierarchy = e.kind === 'hierarchy' || e.kind === 'root_hierarchy'
+        const isPeerLink = e.kind === 'peer_link'
         edges.push({
           id: `topo-${i}`,
           from: e.source,
           to: e.target,
-          color: { color: isHierarchy ? '#1a4a6a' : '#0d2a3a', opacity: 0.8 },
-          dashes: !isHierarchy,
-          width: isHierarchy ? 1 : 0.5,
+          color: { color: isHierarchy ? '#1a4a6a' : isPeerLink ? '#00b8a0' : '#0d2a3a', opacity: isPeerLink ? 0.9 : 0.8 },
+          dashes: isPeerLink ? [6, 4] : !isHierarchy,
+          width: isHierarchy ? 1 : isPeerLink ? 1.5 : 0.5,
         })
       })
     }

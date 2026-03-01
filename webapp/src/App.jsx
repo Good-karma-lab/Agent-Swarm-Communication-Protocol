@@ -99,14 +99,15 @@ export default function App() {
     const effectiveTaskId = (requestedTaskId || taskId || '').trim()
     if (!effectiveTaskId) return
     setTaskId(effectiveTaskId)
-    const [trace, votingDetail, ballots] = await Promise.all([
+    const [trace, votingDetail, ballots, irvData] = await Promise.all([
       api.taskTimeline(effectiveTaskId),
       api.votingTask(effectiveTaskId),
-      api.taskBallots(effectiveTaskId).catch(() => ({ ballots: [], irv_rounds: [] })),
+      api.taskBallots(effectiveTaskId).catch(() => ({ ballots: [] })),
+      api.taskIrvRounds(effectiveTaskId).catch(() => ({ irv_rounds: [] })),
     ])
     setTaskTrace(trace)
     setTaskVoting(votingDetail)
-    setTaskBallots(ballots)
+    setTaskBallots({ ...ballots, irv_rounds: irvData.irv_rounds || [] })
   }, [taskId])
 
   // ── Panel helpers ──────────────────────
@@ -166,6 +167,7 @@ export default function App() {
             taskTrace={taskTrace}
             taskVoting={taskVoting}
             taskBallots={taskBallots}
+            agents={agents}
           />
         </SlidePanel>
       )}
